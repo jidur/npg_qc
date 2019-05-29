@@ -1,24 +1,28 @@
 use strict;
 use warnings;
-use Test::More tests => 43;
+use Test::More tests => 66;
 use Test::Exception;
 
 use_ok('npg_qc::autoqc::checks::tag_metrics');
 
 {
-  my $qc = npg_qc::autoqc::checks::tag_metrics->new(position => 2, path => 'nonexisting', id_run => 2549);
-  throws_ok {$qc->execute()} qr/directory\ nonexisting\ does\ not\ exist/, 'execute: error on nonexisting path';
-}
-
-{
   my $check = npg_qc::autoqc::checks::tag_metrics->new(path => 't/data/autoqc/090721_IL29_2549/data', position =>1, id_run => 2549);
   isa_ok($check, 'npg_qc::autoqc::checks::tag_metrics');
   ok($check->can_run, 'can run the check on a lane');
+  $check = npg_qc::autoqc::checks::tag_metrics->new(path => 't/data/autoqc/090721_IL29_2549/data', rpt_list => '2549:1');
+  ok($check->can_run, 'can run the check on a lane');
+
+   $check = npg_qc::autoqc::checks::tag_metrics->new(path => 't/data/autoqc/090721_IL29_2549/data', rpt_list => '2549:1;2549:2');
+  ok(!$check->can_run, 'cannot run the check on two lanes');
 
   $check = npg_qc::autoqc::checks::tag_metrics->new(path => 't/data/autoqc/090721_IL29_2549/data', position =>1, id_run => 2549, tag_index => 1);
   ok(!$check->can_run, 'cannot run the check on a plex with tag index 1');
+  $check = npg_qc::autoqc::checks::tag_metrics->new(path => 't/data/autoqc/090721_IL29_2549/data', rpt_list => '2549:1:1');
+  ok(!$check->can_run, 'cannot run the check on a plex with tag index 1');
 
   $check = npg_qc::autoqc::checks::tag_metrics->new(path => 't/data/autoqc/090721_IL29_2549/data', position =>1, id_run => 2549, tag_index => 0);
+  ok(!$check->can_run, 'cannot run the check on a plex with tag index 0');
+  $check = npg_qc::autoqc::checks::tag_metrics->new(path => 't/data/autoqc/090721_IL29_2549/data', rpt_list => '2549:1:0');
   ok(!$check->can_run, 'cannot run the check on a plex with tag index 0');
 }
 
@@ -28,8 +32,6 @@ use_ok('npg_qc::autoqc::checks::tag_metrics');
                                                       id_run    => 2549);
  is(npg_qc::autoqc::checks::tag_metrics->spiked_control_description, 'SPIKED_CONTROL', 'spiked control description as a class method');
  is($check->spiked_control_description, 'SPIKED_CONTROL', 'spiked control description as an instance method');
- lives_ok {$check->execute(); } 'input file does not exist, invoking execute lives';
- is ($check->result->comments, 'Neither t/data/autoqc/090721_IL29_2549/data/2549_1_1.bam.tag_decode.metrics nor t/data/autoqc/090721_IL29_2549/data/2549_1.bam.tag_decode.metrics file found', 'comment with an error');
 }
 
 {
@@ -46,6 +48,51 @@ use_ok('npg_qc::autoqc::checks::tag_metrics');
   is($result->max_mismatches_param, 1, 'max mismatches is 1');
   is($result->min_mismatch_delta_param, 3, 'min_mismatch_delta is 3');
   is($result->max_no_calls_param, 2, 'max_no_calls is 2');
+  is($result->tag_hops_percent, undef, 'no tag hop file');
+}
+
+{
+  local $ENV{'NPG_CACHED_SAMPLESHEET_FILE'} = q[t/data/autoqc/tag_metrics/samplesheet_6552.csv];
+
+  my $check = npg_qc::autoqc::checks::tag_metrics->new(path      => 't/data/autoqc/tag_metrics',
+                                                       position  => 1,
+                                                       id_run    => 6552);
+
+  $check->execute();
+  my $result = $check->result;
+  is($result->barcode_tag_name, 'RT', 'barcode tag name is RT');
+  is($result->max_mismatches_param, 1, 'max mismatches is 1');
+  is($result->min_mismatch_delta_param, 1, 'min_mismatch_delta is 1');
+  is($result->max_no_calls_param, 2, 'max_no_calls is 2');
+  is($result->tag_hops_percent, 0, 'empty tag hop file');
+}
+
+{
+  local $ENV{'NPG_CACHED_SAMPLESHEET_FILE'} = q[t/data/autoqc/tag_metrics/samplesheet_6553.csv];
+
+  my $check = npg_qc::autoqc::checks::tag_metrics->new(path      => 't/data/autoqc/tag_metrics',
+                                                       position  => 1,
+                                                       id_run    => 6553);
+
+  $check->execute();
+  my $result = $check->result;
+  is($result->barcode_tag_name, 'RT', 'barcode tag name is RT');
+  is($result->max_mismatches_param, 1, 'max mismatches is 1');
+  is($result->min_mismatch_delta_param, 1, 'min_mismatch_delta is 1');
+  is($result->max_no_calls_param, 2, 'max_no_calls is 2');
+  is($result->tag_hops_percent, 27.272728, 'tag hop file');
+}
+
+{
+  local $ENV{'NPG_CACHED_SAMPLESHEET_FILE'} = q[t/data/autoqc/tag_metrics/samplesheet_25152.csv];
+
+  my $check = npg_qc::autoqc::checks::tag_metrics->new(path      => 't/data/autoqc/tag_metrics',
+                                                       position  => 1,
+                                                       id_run    => 25152);
+
+  $check->execute();
+  my $result = $check->result;
+  is($result->tag_hops_power, 1.0, 'tag_hops_power');
 }
 
 {
@@ -93,22 +140,26 @@ use_ok('npg_qc::autoqc::checks::tag_metrics');
 }
 
 {
-  my $check = npg_qc::autoqc::checks::tag_metrics->new(path      => 't/data/autoqc/tag_metrics',
-                                                       position  => 1,
-                                                       id_run    => 6551);
+  my @checks = ();
+  push @checks, npg_qc::autoqc::checks::tag_metrics->new(qc_in     => 't/data/autoqc/tag_metrics',
+                                                         position  => 1,
+                                                         id_run    => 6551);
+  push @checks, npg_qc::autoqc::checks::tag_metrics->new(qc_in     => 't/data/autoqc/tag_metrics',
+                                                         rpt_list  => '6551:1');
+  foreach my $check (@checks) {
+    is(scalar @{$check->input_files}, 1, 'one input file found');
+    is($check->input_files->[0], 't/data/autoqc/tag_metrics/6551_1.bam.tag_decode.metrics','input file name');
+    is($check->result->pass, undef, 'check outcome undefined');
+    lives_ok { $check->execute } 'executing is OK';
 
-  is(scalar @{$check->input_files}, 1, 'one input file found');
-  is($check->input_files->[0], 't/data/autoqc/tag_metrics/6551_1.bam.tag_decode.metrics','input file name');
-  is($check->result->pass, undef, 'check outcome undefined');
-  lives_ok { $check->execute } 'executing is OK';
-
-  my $r = $check->result;
-  is(join(q[ ], sort {$a <=> $b}  keys %{$r->tags}), '0 1 2 3 4 5 6 7 8 9 10 11 12 168', '14 barcodes parsed');
-  is($r->tags->{10}, 'TAGCTTGT', 'tag 10 sequence is correct');
-  is($r->tags->{0}, 'NNNNNNNN', 'tag zero sequence is correct');
-  is($r->matches_percent->{0}, 0.023683, 'matches percent  is correct');
-  is($r->spiked_control_index, 168, 'spiked control index is 168');
-  is($r->pass, 1, 'check passed');
+    my $r = $check->result;
+    is(join(q[ ], sort {$a <=> $b}  keys %{$r->tags}), '0 1 2 3 4 5 6 7 8 9 10 11 12 168', '14 barcodes parsed');
+    is($r->tags->{10}, 'TAGCTTGT', 'tag 10 sequence is correct');
+    is($r->tags->{0}, 'NNNNNNNN', 'tag zero sequence is correct');
+    is($r->matches_percent->{0}, 0.023683, 'matches percent  is correct');
+    is($r->spiked_control_index, 168, 'spiked control index is 168');
+    is($r->pass, 1, 'check passed');
+  }
 }
 
 1;

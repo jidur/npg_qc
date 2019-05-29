@@ -7,24 +7,16 @@
 #########################
 # This script checks a bam file's tag sequences
 # It should find the observed tags, and map them to tagsets and the expected tags
-##########################
+#########################
 
 use strict;
 use warnings;
 use Carp;
 use Getopt::Long;
+use Term::ANSIColor qw(:constants);
 
+##no critic
 our $VERSION = '0';
-
-## no critic (NamingConventions::Capitalization)
-
-## no critic (RegularExpressions::ProhibitUnusedCapture RegularExpressions::RequireLineBoundaryMatching RegularExpressions::ProhibitEnumeratedClasses RegularExpressions::RequireDotMatchAnything RegularExpressions::RequireExtendedFormatting)
-
-## no critic (InputOutput::RequireBracedFileHandleWithPrint InputOutput::RequireCheckedSyscalls)
-
-## no critic (BuiltinFunctions::ProhibitReverseSortBlock)
-
-## no critic (Subroutines::RequireArgUnpacking) 
 
 sub usage {
 
@@ -43,9 +35,22 @@ sub usage {
   print STDERR "        --degenerate_toleration\n";
   print STDERR "          don't stop reporting if a tag is all N, default false\n";
   print STDERR "\n";
-  print STDERR "        --tag_length\n";
-  print STDERR "          truncate tag sequence to this length, default 0 no truncation\n";
-  print STDERR "          if the value is -ve the tag is truncated from the start\n";
+  print STDERR "        --tag_length <int>,<int>,.. \n";
+  print STDERR "          split tag sequence into parts with the specified langths and look for matches to each part separately, default do not split tag\n";
+  print STDERR "          parts are removed in turn, if a value is -ve the next part is taken from the end otherwise it is taken from the beginning\n";
+  print STDERR "\n";
+  print STDERR "        --revcomp <int>,<int>,.. \n";
+  print STDERR "          reverse complement tag sequence before looking for matches, default do not reverse complement\n";
+  print STDERR "          each part of the tag sequence is reverse complemented independently, int=0(do not revcomp) otherwise revcomp\n";
+  print STDERR "\n";
+  print STDERR "        --clip <int>,<int>,.. \n";
+  print STDERR "          clip expected_sequence to the length of the tag sequence when looking for matches, default no clipping\n";
+  print STDERR "          each part of tag sequence clipped independently, clip<0 left clip, clip=0 no clip and clip>0 right clip\n";
+  print STDERR "\n";
+  print STDERR "        --groups <int>,<int>,..\n";
+  print STDERR "          restrict matches to a comma separated set of tag groups, default look for matches in all tag groups\n";
+  print STDERR "\n";
+  print STDERR "        --help             print this message and quit\n";
   print STDERR "\n";
   print STDERR "\n";
   return;
@@ -68,13 +73,16 @@ sub selectModeTags {
         $maxCount = $tagsFound{$tag};
       }
       if ( (($relativeMaxDrop * $tagsFound{$tag}) < $previousCount) ||
-           (($absoluteMaxDrop * $tagsFound{$tag}) < $maxCount) ||
-           (!$degeneratingToleration && ($tag =~ /^N*$/)) # may wish to stop with this or exclude it
+           (($absoluteMaxDrop * $tagsFound{$tag}) < $maxCount)
          ) {
           last;
       }
       $previousCount = $tagsFound{$tag};
       push @topTags,$tag;
+      # always report degenerate tags
+      if (!$degeneratingToleration && ($tag =~ /^[N:]+$/)) {
+          last;
+      }
     }
     return @topTags;
 }
@@ -85,52 +93,163 @@ sub showTags{
 
     my $ra_topTags = shift;
     my $sampleSize = shift;
+    my $revcomps = shift;
+    my $clips = shift;
+    my $groups = shift;
     my %tagsFound = @_;
     my $unassigned = $sampleSize;
 
     my $class = 'npg_warehouse::Schema';
     my $loaded = eval "require $class"; ## no critic (BuiltinFunctions::ProhibitStringyEval)
-    if( !$loaded ) {
+    if (!$loaded) {
       croak q[Can't load module npg_warehouse::Schema];
     }
 
-    my $s = npg_warehouse::Schema->connect();
+    my %db_tags = ();
 
-    my %matches = ();
-    my %groups = ();
-    my %names = ();
-    foreach my $tag (@{$ra_topTags}) {
-        my $rs = $s->resultset('Tag')->search({is_current=>1, expected_sequence=>$tag});
+    if ($groups =~ /\.taglist/) {
+      # read the taglist files
+      my $id = 0;
+      my @files = split(/[,]/, $groups);
+      for my $file (@files) {
+        $id++;
+        croak "Invalid taglist file $file" unless $file =~ m/\/metadata_cache_(\d+)\/lane_(\d)\.taglist$/;
+        my ($id_run,$lane) = ($1,$2);
+        my $name = "${id_run}_${lane}";
+        open FILE,"<$file" or croak "Can't open taglist file $file : $!\n";
+        foreach (<FILE>) {
+          next if m/^barcode/;
+          croak "Invalid tag $_" unless m/^([ACGT]+)\t(\d+)\t/;
+          my ($sequence,$tag_index) = ($1,$2);
+          push(@{$db_tags{$sequence}},[$name,$id,$tag_index,0]);
+          if (@{$revcomps}) {
+            $sequence =~ tr/ACGTN/TGCAN/;
+            $sequence = reverse($sequence);
+            push(@{$db_tags{$sequence}},[$name,$id,$tag_index,1]);
+          }
+        }
+        close(FILE);
+      }
+    } elsif ($groups =~ /\d+_\d/) {
+      # read the npg_plex_infomation table
+      my $s = npg_warehouse::Schema->connect();
+      my $rs;
+      my @rls = split(/[,]/, $groups);
+      my $id = 0;
+      for my $rl (@rls) {
+        $id++;
+        croak "Invalid run_lane $rl" unless $rl =~ m/^(\d+)_(\d)$/;
+        my ($id_run,$lane) = ($1,$2);
+        my $name = "run ${id_run} lane ${lane}";
+        $rs = $s->resultset('NpgPlexInformation')->search({id_run=>$id_run, position=>$lane});
         while(my $row = $rs->next) {
-          my $name = $row->tag_group_name;
-          my $id = $row->tag_group_internal_id;
-          my $map_id = $row->map_id;
-          if(!defined $name || !defined $id || !defined $map_id) {
+          my $tag_index = $row->tag_index;
+          my $sequence = $row->tag_sequence;
+          if (!defined $tag_index || !defined $sequence) {
             next;
           }
-          $groups{$id}++;
-          $names{$id} = $name;
-          $matches{$tag}->{$id} = $map_id;
+          push(@{$db_tags{$sequence}},[$name,$id,$tag_index,0]);
+          if (@{$revcomps}) {
+            $sequence =~ tr/ACGTN/TGCAN/;
+            $sequence = reverse($sequence);
+            push(@{$db_tags{$sequence}},[$name,$id,$tag_index,1]);
+          }
+        }
+      }
+    } else {
+      # read the tag table
+      my $s = npg_warehouse::Schema->connect();
+      my $rs;
+      my $tag_group_internal_id = ($groups ? [split(/[,]/, $groups)] : undef);
+      if (defined($tag_group_internal_id)) {
+          $rs = $s->resultset('Tag')->search({is_current=>1, tag_group_internal_id=>$tag_group_internal_id});
+      } else {
+          $rs = $s->resultset('Tag')->search({is_current=>1});
+      }
+      while(my $row = $rs->next) {
+        my $name = $row->tag_group_name;
+        my $id = $row->tag_group_internal_id;
+        my $map_id = $row->map_id;
+        my $sequence = $row->expected_sequence;
+        if (!defined $name || !defined $id || !defined $map_id || !defined $sequence) {
+          next;
+        }
+        push(@{$db_tags{$sequence}},[$name,$id,$map_id,0]);
+        if (@{$revcomps}) {
+          $sequence =~ tr/ACGTN/TGCAN/;
+          $sequence = reverse($sequence);
+          push(@{$db_tags{$sequence}},[$name,$id,$map_id,1]);
+        }
+      }
+    }
+
+    my %matches = ();
+    my @groups = ();
+    my %names = ();
+    foreach my $tag (@{$ra_topTags}) {
+        my @subtags = split(/[:]/, $tag);
+        foreach my $i (0..$#subtags) {
+            my $subtag = $subtags[$i];
+            my @matches = ();
+            if ($clips->[$i]) {
+                if ($clips->[$i] < 0) {
+                    @matches = grep {m/$subtag$/} keys %db_tags;
+                } elsif ($clips->[$i]) {
+                    @matches = grep {m/^$subtag/} keys %db_tags;
+                }
+            } else {
+                if (exists($db_tags{$subtag}) ) {
+                    push(@matches,$subtag);
+                }
+            }
+            foreach my $sequence (@matches) {
+                foreach my $match (@{$db_tags{$sequence}}) {
+                    my ($name,$id,$map_id,$revcomp) = @{$match};
+                    if ($revcomp && $revcomps->[$i]) {
+                        $matches{$subtag}->{$id} = [$map_id,1];
+                    } elsif ($revcomp) {
+                        # not looking for revcomp matches on this subtag
+                    } else {
+                        $matches{$subtag}->{$id} = [$map_id,0];
+                    }
+                    $groups[$i]->{$id}++;
+                    $names{$id} = $name;
+                }
+            }
         }
         $unassigned -= $tagsFound{$tag};
     }
     foreach my $tag (@{$ra_topTags}) {
-        printf "%s = %.2f\t\t", $tag, (100 * $tagsFound{$tag}/$sampleSize);
-        foreach my $id (sort {$a<=>$b} keys %groups) {
-            if ( exists($matches{$tag}->{$id}) ){
-                printf "%-2d(%-3d) ", $id, $matches{$tag}->{$id};
-            } else {
-                printf q[        ];
+        printf "%s = %5.2f\t\t", $tag, (100 * $tagsFound{$tag}/$sampleSize);
+        my @subtags = split(/[:]/, $tag);
+        foreach my $i (0..$#subtags) {
+            my $subtag = $subtags[$i];
+            foreach my $id (sort {$a<=>$b} keys %{$groups[$i]}) {
+                if ( exists($matches{$subtag}->{$id}) ){
+                    my ($map_id, $revcomp) = @{$matches{$subtag}->{$id}};
+                    print $revcomp ? REVERSE : q[];
+                    printf "%2d(%3d) ", $id, $map_id;
+                    print $revcomp ? RESET : q[];
+                } else {
+                    printf q[        ];
+                }
+            }
+            if ( $i < $#subtags ){
+                print "\t:\t";
             }
         }
         print "\n";
     }
     printf "%s = %.2f%s\n", "REMAINDER", (100 * $unassigned/$sampleSize), "%";
 
-    if ( %groups ){
-        printf "#matches\tgroup id\tgroup name\n";
-        foreach (sort {$a<=>$b} keys %groups) {
-            printf "%-8d\t%-8d\t%s\n", $groups{$_}, $_, $names{$_};
+    if ( @groups ){
+        printf "%-8s\t%-50s\t%s\n", "group id", "group name", "#matches";
+        foreach my $id (sort {$a<=>$b} keys %names) {
+            printf "%-8d\t%-50s", $id, $names{$id};
+            foreach (@groups) {
+                printf "\t%-8d", (exists($_->{$id}) ? $_->{$id} : 0);
+            }
+            printf "\n";
         }
     }
 
@@ -145,25 +264,68 @@ sub main{
     my $absoluteMaxDrop = $opts->{absolute_max_drop};
     my $degeneratingToleration = $opts->{degenerate_toleration};
     my $tagLength = $opts->{tag_length};
+    my $revcomp = $opts->{revcomp};
+    my $clip = $opts->{clip};
+    my $groups = $opts->{groups};
+    my $rl = $opts->{rl};
 
-    my %tagsFound;
+    my @tagLengths = $tagLength ? split(/[,]/,$tagLength) : ();
+    my @revcomps = $revcomp ? split(/[,]/,$revcomp) : ();
+    my @clips = $clip ? split(/[,]/,$clip) : ();
+
+    my $nonZeroSubTags = 0;
+    map {$nonZeroSubTags++ if $_} @tagLengths;
+    if  ($nonZeroSubTags && @revcomps && ($nonZeroSubTags != ($#revcomps+1))) {
+        print {*STDERR} "\nif you specify a list for both tag_length and revcomp the number of non-zero tag_lengths and revcomps should be equal\n" or croak 'print failed';
+        usage;
+        exit 1;
+    }
+    if  ($nonZeroSubTags && @clips && ($nonZeroSubTags != ($#clips+1))) {
+        print {*STDERR} "\nif you specify a list for both tag_length and clip the number of non-zero tag_lengths and clips should be equal\n" or croak 'print failed';
+        usage;
+        exit 1;
+    }
 
     my $tagsFound = 0;
+    my %tagsFound;
 
     while (<>) {
-      if (/((BC:)|(RT:))Z:([A-Z]*)/) {
-        my $tag = $4;
-        if ($tagLength < 0) {
-          $tag = substr $tag, $tagLength;
-        } elsif ($tagLength) {
-          $tag = substr $tag, 0, $tagLength;
+        if (/((BC:)|(RT:))Z:([A-Z\-]*)/) {
+            my $tag = $4;
+            if ($tag =~ m/\-/) {
+                my @subtags = split(/\-/, $tag);
+                foreach my $i (0..$#tagLengths) {
+                    my $subtag;
+                    if ($tagLengths[$i] == 0) {
+                        $subtags[$i] = "";
+                    } elsif ($tagLengths[$i] < 0) {
+                        $subtags[$i] = substr $subtags[$i], $tagLengths[$i];
+                    } elsif ($tagLengths[$i]) {
+                        $subtags[$i] = substr $subtags[$i], 0, $tagLengths[$i];
+                    }
+                }
+                # exclude empty subtags
+                $tag = join(q{:},grep {$_ ne ""} @subtags);
+            } elsif (@tagLengths) {
+                my @subtags = ();
+                foreach my $i (0..$#tagLengths) {
+                    if ($tagLengths[$i] < 0) {
+                        $subtags[$i] = substr $tag, $tagLengths[$i];
+                        $tag = substr $tag, 0, $tagLengths[$i];
+                    } elsif ($tagLengths[$i]) {
+                        $subtags[$i] = substr $tag, 0, $tagLengths[$i];
+                        $tag = substr $tag, $tagLengths[$i];
+                    }
+                }
+                # exclude empty subtags
+                $tag = join(q{:},grep {$_ ne ""} @subtags);
+            }
+            $tagsFound++;
+            $tagsFound{$tag}++;
         }
-        $tagsFound++;
-        $tagsFound{$tag}++;
-      }
-      if ($tagsFound == $sampleSize) {
-        last;
-      }
+        if ($tagsFound == $sampleSize) {
+           last;
+        }
     }
 
     if ($sampleSize != $tagsFound) {
@@ -171,7 +333,7 @@ sub main{
     }
 
     my @modeTags = selectModeTags($relativeMaxDrop, $absoluteMaxDrop, $degeneratingToleration, %tagsFound);
-    showTags(\@modeTags, $sampleSize, %tagsFound);
+    showTags(\@modeTags, $sampleSize, \@revcomps, \@clips, $groups, %tagsFound);
     return;
 }
 
@@ -179,15 +341,18 @@ sub initialise {
 
 ## no critic (InputOutput::ProhibitInteractiveTest InputOutput::RequireCheckedSyscalls ValuesAndExpressions::RequireNumberSeparators)
 
-    my %options = (sample_size => 10000, relative_max_drop => 10, absolute_max_drop => 10, degenerate_toleration=> 0, tag_length=> 0);
+    my %options = (sample_size => 10000, relative_max_drop => 10, absolute_max_drop => 10, degenerate_toleration => 0, tag_length => q{}, revcomp => q{}, clip => q{}, groups => q{});
 
     my $rc = GetOptions(\%options,
                         'help',
-                        'sample_size:i',
-                        'relative_max_drop:i',
-                        'absolute_max_drop:i',
+                        'sample_size=i',
+                        'relative_max_drop=i',
+                        'absolute_max_drop=i',
                         'degenerate_toleration',
-                        'tag_length:i',
+                        'tag_length=s',
+                        'revcomp=s',
+                        'clip=s',
+                        'groups=s',
                         );
     if ( ! $rc) {
         print {*STDERR} "\nerror in command line parameters\n" or croak 'print failed';

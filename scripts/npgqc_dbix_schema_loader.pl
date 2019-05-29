@@ -6,8 +6,9 @@ use DBIx::Class::Schema::Loader qw(make_schema_at);
 use Config::Auto;
 use lib qw/lib/;
 
-use npg_qc::autoqc::autoqc;
+use npg_qc::autoqc::results::collection;
 use npg_qc::autoqc::role::result;
+use npg_qc::autoqc::results::collection;
 
 our $VERSION = '0';
 
@@ -22,15 +23,16 @@ my $dsn = sprintf 'dbi:mysql:host=%s;port=%s;dbname=%s',
 
 my $roles_map = {};
 my $components_map = {};
-my $role_base = 'npg_qc::autoqc::role::';
+my $role_base    = 'npg_qc::autoqc::role::';
 my $generic_role = $role_base . 'result';
-my $component = 'InflateColumn::Serializer';
-my $flator = 'npg_qc::Schema::Flators';
+my $component    = 'InflateColumn::Serializer';
+my $flator       = 'npg_qc::Schema::Flators';
+my $composition  = 'npg_qc::Schema::Composition';
 
-foreach my $check (@{npg_qc::autoqc::autoqc->checks_list}) {
+foreach my $check (@{npg_qc::autoqc::results::collection->new()->checks_list()}) {
   my ($result_name, $dbix_result_name ) = $generic_role->class_names($check);
   
-  my @roles = ($flator, $generic_role);
+  my @roles = ($composition, $flator, $generic_role);
   my $rpackage = $role_base . $result_name;
   my $found = eval "require $rpackage";
   if ($found) {
@@ -57,8 +59,41 @@ make_schema_at(
         preserve_case       => 1,
         use_namespaces      => 1,
         default_resultset_class => 'ResultSet',
+        
+        exclude => qr/\A v_                    |
+                         analysis              |
+                         cache_query           |
+                         chip_summary          |
+                         cumulative_errors_    |
+                         error_rate_           |
+                         errors_by_            |
+                         fastqcheck            |
+                         frequency_response    |
+                         instrument_statistics |
+                         image_store           |
+                         information_content_  |
+                         lane_qc               |
+                         log_likelihood        |
+                         most_common_          |
+                         move_z                |
+                         offset                |
+                         recipe_file           |
+                         run_graph             |
+                         run_recipe            |
+                         run_tile              |
+                         ref_snp_info          |
+                         run_and_pair          |
+                         run_config            |
+                         run_graph             |
+                         run_info              |
+                         run_timeline          |
+                         signal_mean           |
+                         tile_score
+                     /xms,
 
-        rel_name_map        => sub {#Rename the id relationship so we can access flat versions of the objects and not only the whole trees from ORM.
+        rel_name_map        => sub { # Rename the id relationship so we can access
+                                     # flat versions of the objects and not only
+                                     # the whole trees from ORM.
           my %h = %{shift@_};
           my $name=$h{name};
           $name=~s/^id_//;
@@ -79,6 +114,7 @@ make_schema_at(
         moniker_map         => {
           'alignment_filter_metrics'       => q[AlignmentFilterMetrics],
           'bam_flagstats'                  => q[BamFlagstats],
+          'bcfstats'                       => q[Bcfstats],
           'gc_bias'                        => q[GcBias],
           'pulldown_metrics'               => q[PulldownMetrics],
           'split_stats'                    => q[SplitStats],

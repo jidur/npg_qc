@@ -10,25 +10,6 @@
 
 <div id="content">
 
- <a name="tag metrics_check"></a>
- <h3>Tag metrics</h3>
- <h4>Description</h4>
- <p>This check displays statistics about decoding of the index read. The semantics of the summary table data differs for pools and individual libraries.</p>
- <p>For a pool the overall decoding percent is displayed, followed by the coefficient of variance that characterises the uniformity of tag distribution in a pool. The background of the table cell is blue if the overall decoding rate is over 80%, for lesser values the background is red.</p>
- <p>For an individual library (tag), the decoding percent for this library within a pool is displayed. If the number of reads for this tag is at least one tenth the average number of reads per tag for this pool, the background is grey; otherwise, the background is red.</p>
- <br/>
- <h4>Coefficient of variance calculation:</h4>
-  <p><a href="http://search.cpan.org/~kgb/PDL-2.3.2/Basic/Primitive/primitive.pd#stats">mean</a> = &Sigma;(x<sub>i</sub>) &frasl; N<br/>
-  <a href="http://search.cpan.org/~kgb/PDL-2.3.2/Basic/Primitive/primitive.pd#stats">rms</a> = &radic;( &Sigma;(x<sub>i</sub>-mean)&sup2; &frasl; (N-1))<br/>
-  coef_of_var = rms&#47;mean * 100</p>
- <br/>
-
-<a name="upstream tags_check"></a>
- <h3>Upstream Tags Check</h3>
- <h4>Description</h4>
-Check for contamination of tag#0 BAM file by reads from upstream runs
-<br/><br/>
-
  <a name="genotype_check"></a>
  <h3>Genotype check</h3>
 
@@ -137,8 +118,147 @@ Any close genotype matches found under a different sample name, allowing homozyg
 <br/><br/>
 
 <br/>
+<a name="genotype call_check"></a>
+ <h3>Genotype call metrics</h3>
 
-<a name="verifyBamId"></a>
+<br/>
+<h4>Description</h4>
+Metrics generated as part of calling genotypes at a set of sites specified by the genotype plex name.
+<br/>
+<br/>
+
+<h4>Output Fields</h4>
+<br/>
+<table style="margin-left: 5%; margin-right: 20%;">
+<tr><th>Field</th><th>Description</th></tr>
+<tr>
+  <td>Genotypes attempted</td>
+  <td style="padding: 0 0 5px 10px;">The number genotype sites where a call is attempted.</td>
+</tr>
+<tr>
+  <td>Genotype call rate</td>
+  <td style="padding: 0 0 5px 10px;">The sites called divided by the number genotype sites attempted.</td>
+</tr>
+<tr>
+  <td>Genotype pass rate</td>
+  <td style="padding: 0 0 5px 10px;">The sites called and passing plex specific filters divided by the number genotype sites attempted.</td>
+</tr>
+<tr>
+  <td>Sex markers attempted</td>
+  <td style="padding: 0 0 5px 10px;">Number of sex markers (if present).</td>
+</tr>
+<tr>
+  <td>Sex</td>
+  <td style="padding: 0 0 5px 10px;">M or F for each male or female call (if sex markers present).</td>
+</tr>
+</table>
+
+<br/><br/>
+<a name="bcfstats_check"></a>
+ <h3>bcfstats genotype concordance metrics</h3>
+
+
+<br/>
+<h4>Description</h4>
+Metrics generated as part of calling a set of genotypes for a sample and comparing them with a set of externally supplied genotypes.
+<br/>
+<br/>
+
+<h4>Output Fields</h4>
+<br/>
+<table style="margin-left: 5%; margin-right: 20%;">
+<tr><th>Field</th><th>Description</th></tr>
+<tr>
+  <td>Genotypes attempted</td>
+  <td style="padding: 0 0 5px 10px;">The number genotype sites where a call is attempted.</td>
+</tr>
+<tr>
+  <td>Genotypes called</td>
+  <td style="padding: 0 0 5px 10px;">The number of sites where a genotype call has been made.</td>
+</tr>
+<tr>
+  <td>Genotypes passed</td>
+  <td style="padding: 0 0 5px 10px;">The number of sites called and passing set specific filters.</td>
+</tr>
+<tr>
+  <td>Genotypes compared</td>
+  <td style="padding: 0 0 5px 10px;">The called and passed sites which are also present in the supplied data.</td>
+</tr>
+<tr>
+  <td>Concordance %	</td>
+  <td style="padding: 0 0 5px 10px;">The percentage of the compared sites which have the exact same call.</td>
+</tr>
+<tr>
+  <td>NRD %	</td>
+  <td style="padding: 0 0 5px 10px;">The percentage of discordance at non reference genotype sites.</td>
+</tr>
+</table>
+
+<br/><br/>
+
+<a name="rna seqc_check"></a>
+ <h3>RNA-SeQC metrics</h3>
+ <br/>
+ <h4>Description</h4>
+ <p>Subset of metrics obtained from Broad Institute's RNA-SeQC package. The following summary statistics are calculated by counting the number of reads that have the given characteristics.</p>
+ <br/>
+ <h4>Mapped Reads</h4>
+ <p><b>rRNA</b> reads are non-duplicate and duplicate reads aligning to rRNA regions as defined in the transcript model definition. <b>rRNA Rate</b> is per total reads. </p>
+ <br/>
+ <h4>Transcript-associated Reads</h4>
+ <p>Rates are per mapped read. <b>Exonic Rate</b> is the fraction mapping within exons. <b>Expression Profile Efficiency</b> is the ratio of exon reads to total reads. <b>Transcripts/Genes Detected </b> is the number of transcripts/Genes with at least 5 reads. </p>
+ <br/>
+ <h4>Strand Specificity</h4>
+ <p><b>End 1/2 Sense</b> are the number of End 1 or 2 reads that were sequenced in the sense direction. Similarly, <b>End 1/2 Antisense</b> are the number of End 1 or 2 reads that were sequenced in the antisense direction.<b>End 1/2 Sense %</b> are percentages of intragenic End 1/2 reads that were sequenced in the sense direction. </p>
+ <br/>
+ <h4>Coverage Metrics Highest 1000 Expressed Transcripts</h4>
+ <p>The metrics in this table are calculated across the transcripts that were determined to have the highest expression levels. <b>5'</b> and <b>3'</b> values are per-base coverage averaged across all top transcripts.   5' and 3' ends are 200 base pairs.  Gap % is the total cumulative gap length divided by the total cumulative transcript lengths. </p>
+ <br/>
+<br/>
+
+ <a name="tag metrics_check"></a>
+<h3>Tag metrics</h3>
+ <br/>
+<h4>Description</h4>
+ <p>This check displays statistics about decoding of the index read. The semantics of the summary table data differs for pools and individual libraries.</p>
+ <p>For a pool the overall decoding percent is displayed, followed by the coefficient of variance that characterises the uniformity of tag distribution in a pool. The background of the table cell is blue if the overall decoding rate is over 80%, for lesser values the background is red.</p>
+ <p>For an individual library (tag), the decoding percent for this library within a pool is displayed. If the number of reads for this tag is at least one tenth the average number of reads per tag for this pool, the background is grey; otherwise, the background is red.</p>
+ <p>For dual-index runs the percentage number of tag hops is also displayed together with an estimate of the power to detect tag hops. The power is a number between 0 (a pool containing all possible tag combinations) and 1 (a pool containing only UDIs). It is possible for tag hops to be detected even if the power is 0, in this case tag hops correspond to reads where the second tag is missing and the second index read sequence matches what is expected on the spiked phix which only has one tag</p>
+ <br/>
+ <h4>Coefficient of variance calculation:</h4>
+  <p><a href="http://search.cpan.org/~kgb/PDL-2.3.2/Basic/Primitive/primitive.pd#stats">mean</a> = &Sigma;(x<sub>i</sub>) &frasl; N<br/>
+  <a href="http://search.cpan.org/~kgb/PDL-2.3.2/Basic/Primitive/primitive.pd#stats">rms</a> = &radic;( &Sigma;(x<sub>i</sub>-mean)&sup2; &frasl; (N-1))<br/>
+  coef_of_var = rms&#47;mean * 100</p>
+ <br/>
+
+<a name="upstream tags_check"></a>
+ <h3>Upstream Tags Check</h3>
+ <br/>
+<h4>Description</h4>
+Check for contamination of tag#0 BAM file by reads from upstream runs
+<br/><br/>
+
+<br/>
+
+<a name="bam flagstats_check"></a>
+<h3>bam flagstats check</h3>
+<br/>
+<h4>Description</h4>
+The bam flagstats check reports simple read stats. Optionally there are 
+also target regions stats and autosome only target regions stats where 
+appropriate regions sets are available.
+<br/><br/>
+The header table lists percentage of reads which are mapped, percentage of 
+reads which are duplicates if available and optionally the following three 
+target metrics separated by a pipe delimiter ;<br/><br/>
+<table style="margin-left: 5%;margin-right: 50%;">
+<tr><th>Field</th><th>Description</th></tr>
+<tr><td>PP%</td><td>% mapped reads which are mapped in proper pairs - from Target region stats</td></tr>
+<tr><td>Gb</td><td>yield within target (bp) - from Target region stats</td></tr>
+<tr><td>Cov</td><td>% regions above coverage threshold - from Autosomes only target region stats</td></tr>
+</table>
+<br/><br/>
+<a name="verify bam id_check"></a>
 <h3>VerifyBamID contamination check</h3>
 <br/><br/>
 <h4>Description</h4>

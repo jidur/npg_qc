@@ -1,14 +1,14 @@
 package npg_qc::autoqc::checks::qX_yield;
 
 use Moose;
+use MooseX::StrictConstructor;
 use namespace::autoclean;
 use Readonly;
-use Carp;
-use English qw(-no_match_vars);
 use Math::Round qw(round);
+use Try::Tiny;
 
-use npg_common::fastqcheck;
-use npg::api::run;
+use npg_qc::autoqc::parse::samtools_stats;
+use npg_qc::autoqc::constants qw/ $SAMTOOLS_SEC_QCFAIL_SUPPL_FILTER /;
 
 extends qw(npg_qc::autoqc::checks::check);
 
@@ -21,124 +21,156 @@ npg_qc::autoqc::checks::qX_yield
 
 =head1 SYNOPSIS
 
-Inherits from npg_qc::autoqc::checks::check. See description of attributes in the documentation for that module.
-  my $check = npg_qc::autoqc::checks::qX_yield->new(path=>q[/staging/IL29/analysis/090721_IL29_3379/data], position=>1);
+Inherits from npg_qc::autoqc::checks::check.
+
+  my $check = npg_qc::autoqc::checks::qX_yield->new(id_run => 33, position=>1, qc_in => 't');
+  $check->execute();
+  my $check = npg_qc::autoqc::checks::qX_yield->new(
+    rpt_list => '33:1:2;33:2:2', qc_in => '/tmp', is_paired_read => 1);
+  my $check = npg_qc::autoqc::checks::qX_yield->new(
+    rpt_list => '33:1:2;33:2:2', is_paired_read => 1, platform_is_hiseq => 1
+    qc_in => 'dir', qc_out => 'dir/qc');
 
 =head1 DESCRIPTION
 
-A fast qX check that uses a fastqcheck file.
-
-=head1 SUBROUTINES/METHODS
+Uses samtools stats file to compute number of bases at a number of quality values (20, 30, 40).
 
 =cut
 
+Readonly::Array  my @QUALITY_THRESHOLDS        => (20, 30, 40);
+Readonly::Scalar my $EXT                       => 'stats';
+Readonly::Scalar my $MIN_YIELD_THRESHOLD_KB_HS => 5_000_000;
+Readonly::Scalar my $DEFAULT_READ_LENGTH_HS    => 75;
+Readonly::Scalar my $THOUSAND                  => 1000;
+Readonly::Array  my @READS                     => qw/ forward reverse /;
 
-Readonly::Scalar our $Q_CUTOFF                  => 20;
-Readonly::Scalar our $EXT                       => 'fastqcheck';
-Readonly::Scalar our $MIN_YIELD_THRESHOLD_KB_GA    => 1_500_000;
-Readonly::Scalar our $MIN_YIELD_THRESHOLD_KB_HS    => 5_000_000;
-Readonly::Scalar our $DEFAULT_READ_LENGTH_GA       => 76;
-Readonly::Scalar our $DEFAULT_READ_LENGTH_HS       => 75;
-Readonly::Scalar our $THOUSAND                  => 1000;
-Readonly::Scalar our $NA                        => -1;
+=head1 SUBROUTINES/METHODS
 
-has '+file_type' => (default    => $EXT,);
+=head2 file_type
 
+Input file type extension.  Default - stats.
 
-override 'execute'            => sub  {
+=cut
+
+has '+file_type'        => (default => $EXT,);
+
+=head2 suffix
+
+Input file name suffix. The filter used in samtools stats command to
+produce the input samtools stats file. Defaults to F0xB00.
+
+=cut
+
+has '+suffix' => (default => $SAMTOOLS_SEC_QCFAIL_SUPPL_FILTER,);
+
+=head2 platform_is_hiseq
+
+=cut
+
+has 'platform_is_hiseq' => (isa => q[Bool], is  => q[ro],);
+
+=head2 is_paired_read
+
+Boolean flag indicating whether both a forward and reverse reads are present.
+Defaults to true.
+ 
+=cut
+
+has 'is_paired_read'  => (isa       => 'Bool',
+                          is        => 'ro',
+                          predicate => 'has_is_paired_read',
+                         );
+
+=head2 execute
+
+=cut
+
+override 'execute' => sub {
   my $self = shift;
-  if (!super()) { return 1;}
 
-  my @fnames = @{$self->input_files};
-  my $short_fnames = $self->generate_filename_attr();
+  super();
 
-  my @thresholds = ($Q_CUTOFF);
+  my $stats = npg_qc::autoqc::parse::samtools_stats->new(file_path => $self->input_files->[0]);
+  my @reads = @READS;
+  my $is_paired_read = $self->has_is_paired_read
+                       ? $self->is_paired_read
+                       : $stats->has_reverse_read;
 
-  $self->result->threshold_quality($Q_CUTOFF);
-  my $count = 0;
-  my @apass = ($NA, $NA);
+  if (!$is_paired_read) {
+    pop @reads;
+  }
+  my $reads_length = $stats->reads_length;
 
-  foreach my $filename (@fnames) {
+  my $i = 1;
+  my %indices = map { $_ => $i++ } @reads;
 
-      my $suffix = $count + 1;
-      my $filename_method = "filename$suffix";
-      $self->result->$filename_method($short_fnames->[$count]);
+  my $source_file_name = $self->generate_filename_attr->[0];
+  my @apass = ();
+  my @thresholds = @QUALITY_THRESHOLDS;
+  my $base_quality = shift @thresholds;
+  $self->result->threshold_quality($base_quality);
 
-      my $fq = npg_common::fastqcheck->new(fastqcheck_path =>$filename);
-      my $values = $fq->qx_yield(\@thresholds);
+  foreach my $read ( @reads ) {
+    my $suffix = $indices{$read};
+    my $filename_method = "filename$suffix";
+    $self->result->$filename_method($source_file_name);
+    my $yield = $stats->yield($read);
+    my $method_name = 'yield' . $suffix;
+    #####
+    # The samtools stats files have valiable number of quality columns,
+    # depending on the maximum available quality. For example, for NovaSeq
+    # data maximum quality is below 40. We assume zero where data for a
+    # particulr quality value are not available.
+    #
+    $self->result->$method_name((defined $yield && defined $yield->{$base_quality})
+                                ? round($yield->{$base_quality}/$THOUSAND) : 0);
 
-      my $yield_method = "yield$suffix";
-      $self->result->$yield_method(round($values->[0]/$THOUSAND));
+    for my $q (@thresholds) {
+      my $method_name4q = sprintf '%s_q%i', $method_name, $q;
+        $self->result->$method_name4q((defined $yield && defined $yield->{$q})
+                                     ? round($yield->{$q}/$THOUSAND) : 0);
+    }
 
-      if (!defined $self->tag_index) {
-          my $threshold = $self->_get_threshold($fq);
-          if ($threshold != $NA) {
-              my $threshold_yield_method = "threshold_yield$suffix";
-              $self->result->$threshold_yield_method($threshold);
-          } else {
-              if ($self->result->$yield_method == 0 ) {
-                  $threshold = 0;
-              }
-          }
-
-          if ($threshold >= 0) {
-              $apass[$count] = 0;
-              if ($self->result->$yield_method > $threshold) {
-                  $apass[$count] = 1;
-              }
-          }
+    if (!defined $self->tag_index) {
+      my $threshold = $self->_get_threshold($reads_length->{$read});
+      if (defined $threshold) {
+        my $threshold_yield_method = "threshold_yield$suffix";
+        $self->result->$threshold_yield_method($threshold);
+        push @apass, $self->result->$method_name > $threshold ? 1 : 0;
+      } else {
+        if ($self->result->$method_name == 0 ) {
+          push @apass, 0;
+        }
       }
-      $count++;
+    }
   }
 
-  if (!defined $self->tag_index) {
-      my $pass = $self->overall_pass(\@apass, $count);
-      if ($pass != $NA) { $self->result->pass($pass); }
+  if (@apass && $self->num_components == 1 &&
+    !defined $self->composition->get_component(0)->tag_index) {
+    $self->result->pass($self->overall_pass(@apass));
   }
 
   return 1;
 };
 
-
 sub _get_threshold {
+  my ($self, $read_length) = @_;
 
-  my ($self, $fq) = @_;
-
-  ##no critic (RequireCheckingReturnValueOfEval)
-
-  my $read_length;
-  eval {
-      $read_length = $fq->read_length();
-  };
-  if ($EVAL_ERROR || $read_length <= 0) { return $NA;}
-
-  my $model = npg::api::run->new({ id_run => $self->id_run, })->instrument->model;
-  my $threshold;
-
-  if($model eq 'HK') {
-    $threshold = $MIN_YIELD_THRESHOLD_KB_GA;
-    if ($read_length != $DEFAULT_READ_LENGTH_GA) {
-      $threshold = ($read_length * $threshold) / $DEFAULT_READ_LENGTH_GA;
-    }
-  }
-  elsif($model eq 'HiSeq') {
-    $threshold = $MIN_YIELD_THRESHOLD_KB_HS;
+  if ($self->num_components == 1 && $read_length > 0 && $self->platform_is_hiseq()) {
+    my $threshold = $MIN_YIELD_THRESHOLD_KB_HS;
     if ($read_length != $DEFAULT_READ_LENGTH_HS) {
       $threshold = ($read_length * $threshold) / $DEFAULT_READ_LENGTH_HS;
     }
-  }
-  else {
-    # warn - unrecognised instrument
-    $self->result->comments('Unrecognised instrument model');
-    $threshold = $NA;
+    return round($threshold);
   }
 
-  return round($threshold);
+  return;
 }
 
 __PACKAGE__->meta->make_immutable;
 
 1;
+
 __END__
 
 =head1 DIAGNOSTICS
@@ -151,21 +183,17 @@ __END__
 
 =item Moose
 
+=item MooseX::StrictConstructor
+
 =item namespace::autoclean
-
-=item Carp
-
-=item English -no_match_vars
 
 =item Readonly
 
-=item Math::Round round
+=item Math::Round
 
-=item npg_common::fastqcheck
+=item Try::Tiny
 
 =item npg_qc::autoqc::checks::check
-
-=item npg::api::run
 
 =back
 
@@ -179,7 +207,7 @@ Marina Gourtovaia E<lt>mg8@sanger.ac.ukE<gt>
 
 =head1 LICENSE AND COPYRIGHT
 
-Copyright (C) 2015 GRL
+Copyright (C) 2018 GRL
 
 This file is part of NPG.
 

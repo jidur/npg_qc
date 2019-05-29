@@ -1,15 +1,17 @@
 use strict;
 use warnings;
 use lib 't/lib';
-use Test::More tests => 31;
+use Test::More tests => 30;
 use Test::Exception;
 use HTTP::Request::Common;
 use XML::LibXML;
+
+use npg_tracking::glossary::composition::factory;
+use npg_tracking::glossary::composition::component::illumina;
 use t::util;
 
 BEGIN {
   local $ENV{'HOME'} = 't/data';
-  use_ok('npg_qc_viewer::Util::FileFinder'); #we need to get listing of staging areas from a local conf file
 }
 
 # programmatically adding break points $DB::single = 1;
@@ -20,12 +22,19 @@ my $util = t::util->new();
 $util->modify_logged_user_method();
 
 local $ENV{CATALYST_CONFIG} = $util->config_path;
-local $ENV{TEST_DIR}        = $util->staging_path;
 
 my $schemas;
 {
   lives_ok { $schemas = $util->test_env_setup()}  'test db created and populated';
   use_ok 'Catalyst::Test', 'npg_qc_viewer';
+
+  my $f = npg_tracking::glossary::composition::factory->new();
+  $f->add_component(npg_tracking::glossary::composition::component::illumina->new(
+  id_run => 4025, position => 1));
+  
+  my $vrs = $schemas->{'qc'}->resultset("VerifyBamId");
+  my $fk_id = $vrs->find_or_create_seq_composition($f->create_composition())
+                 ->id_seq_composition();
   my $values = { id_run             => 4025,
                  position           => 1,
                  path               => '/some/path',
@@ -36,8 +45,10 @@ my $schemas;
                  freeLK0            => '2393541.68',
                  freeLK1            => '2392830.84',
                  pass               => '1',
-                 tag_index          => '1' };
-  $schemas->{'qc'}->resultset("VerifyBamId")->create($values);
+                 tag_index          => '1',
+                 id_seq_composition => $fk_id};
+
+  $vrs->create($values);
 }
 
 {

@@ -38,11 +38,13 @@ use namespace::autoclean;
 
 =item * L<DBIx::Class::InflateColumn::DateTime>
 
+=item * L<DBIx::Class::InflateColumn::Serializer>
+
 =back
 
 =cut
 
-__PACKAGE__->load_components('InflateColumn::DateTime');
+__PACKAGE__->load_components('InflateColumn::DateTime', 'InflateColumn::Serializer');
 
 =head1 TABLE: C<samtools_stats>
 
@@ -74,9 +76,7 @@ A foreign key referencing the id_seq_composition column of the seq_composition t
 
   data_type: 'varchar'
   is_nullable: 0
-  size: 8
-
-Filter used to produce the stats file
+  size: 30
 
 =head2 stats
 
@@ -103,7 +103,7 @@ __PACKAGE__->add_columns(
     is_nullable => 0,
   },
   'filter',
-  { data_type => 'varchar', is_nullable => 0, size => 8 },
+  { data_type => 'varchar', is_nullable => 0, size => 30 },
   'stats',
   { data_type => 'mediumblob', is_nullable => 0 },
 );
@@ -153,14 +153,35 @@ __PACKAGE__->belongs_to(
   { is_deferrable => 1, on_delete => 'NO ACTION', on_update => 'NO ACTION' },
 );
 
+=head1 L<Moose> ROLES APPLIED
 
-# Created by DBIx::Class::Schema::Loader v0.07043 @ 2015-09-14 17:35:41
-# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:gxBn3P+F0EV0spaDg/HHRQ
+=over 4
+
+=item * L<npg_qc::Schema::Composition>
+
+=item * L<npg_qc::Schema::Flators>
+
+=item * L<npg_qc::autoqc::role::result>
+
+=item * L<npg_qc::autoqc::role::samtools_stats>
+
+=back
+
+=cut
+
+
+with 'npg_qc::Schema::Composition', 'npg_qc::Schema::Flators', 'npg_qc::autoqc::role::result', 'npg_qc::autoqc::role::samtools_stats';
+
+
+# Created by DBIx::Class::Schema::Loader v0.07049 @ 2018-10-22 10:54:55
+# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:sH4LYB2SLL+zYC4RjluxJw
 
 
 # You can replace this text with custom code or comments, and it will be preserved on regeneration
 
-with 'npg_qc::Schema::Flators';
+with qw/ npg_qc::Schema::Composition
+         npg_qc::Schema::Flators
+         npg_qc::autoqc::role::result /;
 
 our $VERSION = '0';
 
@@ -215,6 +236,12 @@ around 'set_inflated_columns' => sub {
 
 __PACKAGE__->set_inflator4xz_compressed_scalar(qw(stats));
 
+=head2 composition
+
+Attribute of type npg_tracking::glossary::composition.
+
+=cut
+
 __PACKAGE__->meta->make_immutable;
 1;
 __END__
@@ -255,7 +282,7 @@ Marina Gourtovaia E<lt>mg8@sanger.ac.ukE<gt>
 
 =head1 LICENSE AND COPYRIGHT
 
-Copyright (C) 2016 GRL
+Copyright (C) 2017 GRL
 
 This file is part of NPG.
 

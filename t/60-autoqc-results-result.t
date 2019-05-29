@@ -1,9 +1,11 @@
 use strict;
 use warnings;
-use Test::More tests => 48;
+use Test::More tests => 49;
 use Test::Exception;
 
 use_ok ('npg_qc::autoqc::results::result');
+use_ok('npg_tracking::glossary::composition::factory');
+use_ok('npg_tracking::glossary::composition::component::illumina');
 
 {
     my $r = npg_qc::autoqc::results::result->new(id_run => 2, path => q[mypath], position => 1);
@@ -35,9 +37,6 @@ use_ok ('npg_qc::autoqc::results::result');
 }
 
 {
-    use_ok('npg_tracking::glossary::composition::factory');
-    use_ok('npg_tracking::glossary::composition::component::illumina');
-
     my $f = npg_tracking::glossary::composition::factory->new();
     my $c = {id_run => 3, position => 4, tag_index => 5};
     my $comp1 = npg_tracking::glossary::composition::component::illumina->new($c);
@@ -97,6 +96,7 @@ use_ok ('npg_qc::autoqc::results::result');
                                                  );
     my $saved_path = q[/tmp/autoqc_check.json];
     $r->store($saved_path);
+    delete $r->{'filename_root'};
     my $saved_r = npg_qc::autoqc::results::result->load($saved_path);
     sleep 1;
     unlink $saved_path;
@@ -110,7 +110,9 @@ use_ok ('npg_qc::autoqc::results::result');
                                         id_run    => 2549,
                                                  );
     throws_ok {$r->equals_byvalue({})} qr/No parameters for comparison/, 'error when an empty hash is given in equals_byvalue';
-    throws_ok {$r->equals_byvalue({position => 3, unknown => 5,})} qr/cannot be compared/, 'error when a hash with an unknown key is used in equals_byvalue';
+    throws_ok {$r->equals_byvalue({position => 3, unknown => 5,})}
+      qr/Can't locate object method \"unknown\"/,
+     'error when a hash representing an unknown attribute is used in equals_byvalue';
     ok($r->equals_byvalue({position => 3, id_run => 2549,}), 'equals_byvalue returns true');
     ok($r->equals_byvalue({position => 3, class_name => q[result],}), 'equals_byvalue returns true');
     ok($r->equals_byvalue({position => 3, check_name => q[result], tag_index => undef,}), 'equals_byvalue returns true');
@@ -122,7 +124,6 @@ use_ok ('npg_qc::autoqc::results::result');
 {
     my $r = npg_qc::autoqc::results::result->new(
                                         position  => 3,
-                                        path      => 't/data/autoqc/090721_IL29_2549/data',
                                         id_run    => 2549,
                                         tag_index => 5,
                                                  );
@@ -136,7 +137,6 @@ use_ok ('npg_qc::autoqc::results::result');
 {
     my $r = npg_qc::autoqc::results::result->new(
                                         position  => 3,
-                                        path      => 't/data/autoqc/090721_IL29_2549/data',
                                         id_run    => 2549,
                                                 );
     $r->set_info('Aligner', 'bwa-0.55');
@@ -148,24 +148,45 @@ use_ok ('npg_qc::autoqc::results::result');
 {
     my $r = npg_qc::autoqc::results::result->new(
                                         position  => 3,
-                                        path      => 't/data/autoqc/090721_IL29_2549/data',
                                         id_run    => 2549,
-                                                );
-    is (npg_qc::autoqc::results::result->rpt_key_delim, q[:], 'rpt key delim');
-    is (npg_qc::autoqc::role::result->rpt_key_delim, q[:], 'rpt key delim');
-    is ($r->rpt_key_delim, q[:], 'rpt key delim');
+                                                 );
     is ($r->rpt_key, q[2549:3], 'rpt key');
     
-    $r->tag_index(0);
+    $r = npg_qc::autoqc::results::result->new(
+                                        position  => 3,
+                                        id_run    => 2549,
+                                        tag_index => 0
+                                             );
     is ($r->rpt_key, q[2549:3:0], 'rpt key');
 
-    $r->tag_index(3);
+    $r = npg_qc::autoqc::results::result->new(
+                                        position  => 3,
+                                        id_run    => 2549,
+                                        tag_index => 3
+                                             );
     is ($r->rpt_key, q[2549:3:3], 'rpt key');      
 }
 
 {
-    throws_ok {npg_qc::autoqc::results::result->inflate_rpt_key(q[5;6])} qr/Invalid rpt key/, 'error when inflating rpt key';
+    throws_ok {npg_qc::autoqc::results::result->inflate_rpt_key(q[5;6])}
+        qr/Both id_run and position should be defined non-zero values /,
+        'error when inflating rpt key';
     is_deeply(npg_qc::autoqc::results::result->inflate_rpt_key(q[5:6]), {id_run=>5,position=>6,}, 'rpt key inflated');
     is_deeply(npg_qc::autoqc::results::result->inflate_rpt_key(q[5:6:1]), {id_run=>5,position=>6,tag_index=>1}, 'rpt key inflated');
     is_deeply(npg_qc::autoqc::results::result->inflate_rpt_key(q[5:6:0]), {id_run=>5,position=>6,tag_index=>0}, 'rpt key inflated');
+}
+
+{
+  my $f = npg_tracking::glossary::composition::factory->new();
+  my $c = {id_run => 3, position => 4, tag_index => 5};
+  my $comp1 = npg_tracking::glossary::composition::component::illumina->new($c);
+  $f->add_component($comp1);
+  $c->{'position'} = 5;
+  my $comp2 = npg_tracking::glossary::composition::component::illumina->new($c);
+  $f->add_component($comp2);
+  my $r = npg_qc::autoqc::results::result->new(composition => $f->create_composition());
+  ok($r->can('result_file_path'), 'object has result_file_path accessor');
+  is($r->result_file_path, undef, 'value undefined by default');
+  lives_ok { $r->result_file_path('my path') } 'can assign a value';
+  is($r->result_file_path, 'my path', 'value was assigned correctly');
 }

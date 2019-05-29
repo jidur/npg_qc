@@ -1,23 +1,23 @@
-#########
-# Author:        jo3
-# Created:       Autumn 2010
-#
 use strict;
 use warnings;
 use autodie qw(:all);
 use File::Temp qw/ tempdir /;
 use File::Spec::Functions qw(catfile);
 use Cwd;
-
-use Test::More tests => 44;
+use Test::More tests => 43;
 use Test::Deep;
 use Test::Exception;
+use npg_tracking::util::abs_path qw(abs_path);
 
 use_ok('npg_qc::autoqc::checks::ref_match');
 
 my $fastq_path = 't/data/autoqc';
 my $repos = join q[/], cwd, q[t/data/autoqc];
-my $ref_repos  = getcwd() . '/t/data/autoqc/references';
+my $ref_repos  = abs_path(getcwd() . '/t/data/autoqc/references');
+
+local $ENV{'http_proxy'} = 'wibble.com';
+local $ENV{'no_proxy'} = q[];
+local $ENV{'NPG_WEBSERVICE_CACHE_DIR'} = q[t/data/autoqc];
 
 my $dir = tempdir( CLEANUP => 1 );
 my $bt = join q[/], $dir, q[bowtie];
@@ -52,8 +52,6 @@ close $fh;
         'Temporary fastq path is in the temp dir' );
     ok( $test->sample_read_length() =~ m/^ \d+ $/msx,
         'A default read length is set' );
-    ok( $test->sample_read_count()  =~ m/^ \d+ $/msx,
-        'A default read count is set' );
 }
 
 {
@@ -68,7 +66,6 @@ close $fh;
                         aligner            => 'smalt',
                         temp_fastq         => '/tEmp/faStq',
                         sample_read_length => 250,
-                        sample_read_count  => 3,
                         request_list       => [ 'abc', 'def' ],
                         ref_repository     => 't/data',
         );
@@ -85,8 +82,6 @@ close $fh;
         'Default temporary fastq path overridden' );
     is( $override_test->sample_read_length(), 250,
         'Default read length overridden' );
-    is( $override_test->sample_read_count(), 3,
-        'Default read count overridden' );
     cmp_bag( $override_test->request_list(), [ 'abc', 'def' ],
         'Requested organism list explicitly specified' );
     is( $override_test->ref_repository(), 't/data',
@@ -100,7 +95,6 @@ close $fh;
                         id_run             => 1937,
                         position           =>    3,
                         sample_read_length =>   27,
-                        sample_read_count  =>    3,
                         repository => $repos,
         )
     } qr/Sample read length 27 is below 28 \(lowest acceptable value\)/,
@@ -113,7 +107,6 @@ close $fh;
                         id_run             => 1937,
                         position           =>    3,
                         sample_read_length =>   37,
-                        sample_read_count  =>    3,
                         read1_fastq        => q[t/data/autoqc/ref_match/narrow.fastq],
                         repository => $repos,
     );
@@ -131,7 +124,6 @@ close $fh;
                         id_run             => 1937,
                         position           =>    3,
                         sample_read_length =>   39,
-                        sample_read_count  =>    3,
                         repository => $repos,
         );
     }
@@ -141,7 +133,6 @@ close $fh;
              'No error when reads are shorter than requested';
     ok( -e $test->temp_fastq(), 'Temp fastq file created' );
     is( $test->result->sample_read_length(), 37, 'Sample read length is 37' );
-    is( $test->result->sample_read_count(),   3, 'Sample read count is 3' );
 }
 
 
@@ -288,8 +279,9 @@ close $fh;
 }
 
 {
-    my $test = npg_qc::autoqc::checks::ref_match->new(
-                path           => $fastq_path,
+    my @checks = ();
+    push @checks, npg_qc::autoqc::checks::ref_match->new(
+                qc_in          => $fastq_path,
                 aligner_cmd    => $bt,
                 id_run         => 1937,
                 position       =>    3,
@@ -297,10 +289,19 @@ close $fh;
                 request_list   => ['Vibrio_cholerae'],
                 repository => $repos,
     );
-
-    lives_ok {$test->execute} 'execute lives';
-
-    is_deeply( $test->result->aligned_read_count(), { 'Vibrio_cholerae' => 2 }, 'Correct match count saved' );
+    push @checks, npg_qc::autoqc::checks::ref_match->new(
+                qc_in          => $fastq_path,
+                aligner_cmd    => $bt,
+                rpt_list       => '1937:3',
+                ref_repository => $ref_repos,
+                request_list   => ['Vibrio_cholerae'],
+                repository => $repos,
+    );
+    foreach my $test (@checks) {
+        lives_ok {$test->execute} 'execute lives';
+        is_deeply( $test->result->aligned_read_count(), { 'Vibrio_cholerae' => 2 },
+            'Correct match count saved' );
+    }
 }
 
 1;

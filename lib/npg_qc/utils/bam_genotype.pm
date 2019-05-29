@@ -12,6 +12,7 @@ use File::Basename;
 use File::Spec::Functions qw(catfile catdir);
 use JSON;
 use Moose;
+use MooseX::StrictConstructor;
 use namespace::autoclean;
 use Moose::Util::TypeConstraints;
 use Readonly;
@@ -21,8 +22,8 @@ use npg_common::roles::software_location;
 our $VERSION = '0';
 
 ##no critic
-Readonly::Scalar my $SAMTOOLS_NAME => 'samtools1';
-Readonly::Scalar my $BCFTOOLS_NAME => 'bcftools1';
+Readonly::Scalar my $SAMTOOLS_NAME => 'samtools';
+Readonly::Scalar my $BCFTOOLS_NAME => 'bcftools';
 
 subtype '_bamgt_ReadableFile'
       => as Str
@@ -110,40 +111,6 @@ sub _build_samtools {
 	return $self->samtools_name;
 }
 
-has 'samtools_extract_regions' => (
-        is => 'ro',
-        isa => 'NpgCommonResolvedPathExecutable',
-        lazy_build => 1,
-        coerce => 1,
-);
-sub _build_samtools_extract_regions {
-	my ($self) = @_;
-	return $self->samtools_name;
-}
-
-has 'samtools_mpileup' => (
-        is => 'ro',
-        isa => 'NpgCommonResolvedPathExecutable',
-        lazy_build => 1,
-        coerce => 1,
-);
-sub _build_samtools_mpileup {
-	my ($self) = @_;
-	return $self->samtools_name;
-}
-
-has 'samtools_merge' => (
-        is => 'ro',
-        isa => 'NpgCommonResolvedPathExecutable',
-        lazy_build => 1,
-        coerce => 1,
-);
-sub _build_samtools_merge {
-	my ($self) = @_;
-	return $self->samtools_name;
-}
-
-# you can override the executable name. May be useful for variants like "samtools_irods"
 has 'bcftools_name' => (
 	is => 'ro',
 	isa => 'Str',
@@ -334,15 +301,15 @@ sub _build__call_gt_cmd {
 	my $bam_file_list = $self->bam_file_list;
 
 	if(@{$bam_file_list} == 1) {
-		$cmd = sprintf q{bash -c 'set -o pipefail && %s view -b %s %s 2>/dev/null | %s mpileup -l %s -f %s -g - 2>/dev/null | %s call -c -O v - 2>/dev/null'}, $self->samtools_extract_regions, $bam_file_list->[0], $self->_regions_string, $self->samtools_mpileup, $self->pos_snpname_map_filename, $self->reference, $self->bcftools;
+		$cmd = sprintf q{bash -c 'set -o pipefail && %s view -b %s %s 2>/dev/null}, $self->samtools, $bam_file_list->[0], $self->_regions_string;
 	}
 	else {
-		$cmd = sprintf q{bash -c 'set -o pipefail && %s merge -- - }, $self->samtools_merge;
+		$cmd = sprintf q{bash -c 'set -o pipefail && %s merge -- - }, $self->samtools;
 		for my $bam_file (@{$bam_file_list}) {
-			$cmd .= sprintf q{<(%s view -b %s %s) }, $self->samtools_extract_regions, $bam_file, $self->_regions_string;
+			$cmd .= sprintf q{<(%s view -b %s %s) }, $self->samtools, $bam_file, $self->_regions_string;
 		}
-		$cmd .= sprintf q{ | %s mpileup -l %s -f %s -g - 2>/dev/null | %s call -c -O v - 2>/dev/null'}, $self->samtools_mpileup, $self->pos_snpname_map_filename, $self->reference, $self->bcftools;
 	}
+  $cmd .=  sprintf q{ | %s sort -l 0 - 2>/dev/null | %s mpileup -l %s -f %s -g - 2>/dev/null | %s call -c -O v - 2>/dev/null'}, $self->samtools, $self->samtools, $self->pos_snpname_map_filename, $self->reference, $self->bcftools;
 
 	return $cmd;
 }

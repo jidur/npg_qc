@@ -61,17 +61,26 @@ __PACKAGE__->table('tag_metrics');
   is_auto_increment: 1
   is_nullable: 0
 
+=head2 id_seq_composition
+
+  data_type: 'bigint'
+  extra: {unsigned => 1}
+  is_foreign_key: 1
+  is_nullable: 0
+
+A foreign key referencing the id_seq_composition column of the seq_composition table
+
 =head2 id_run
 
   data_type: 'bigint'
   extra: {unsigned => 1}
-  is_nullable: 0
+  is_nullable: 1
 
 =head2 position
 
   data_type: 'tinyint'
   extra: {unsigned => 1}
-  is_nullable: 0
+  is_nullable: 1
 
 =head2 path
 
@@ -177,8 +186,19 @@ __PACKAGE__->table('tag_metrics');
 =head2 tag_index
 
   data_type: 'bigint'
-  default_value: -1
-  is_nullable: 0
+  is_nullable: 1
+
+=head2 tag_hops_percent
+
+  data_type: 'float'
+  extra: {unsigned => 1}
+  is_nullable: 1
+
+=head2 tag_hops_power
+
+  data_type: 'float'
+  extra: {unsigned => 1}
+  is_nullable: 1
 
 =cut
 
@@ -190,10 +210,17 @@ __PACKAGE__->add_columns(
     is_auto_increment => 1,
     is_nullable => 0,
   },
+  'id_seq_composition',
+  {
+    data_type => 'bigint',
+    extra => { unsigned => 1 },
+    is_foreign_key => 1,
+    is_nullable => 0,
+  },
   'id_run',
-  { data_type => 'bigint', extra => { unsigned => 1 }, is_nullable => 0 },
+  { data_type => 'bigint', extra => { unsigned => 1 }, is_nullable => 1 },
   'position',
-  { data_type => 'tinyint', extra => { unsigned => 1 }, is_nullable => 0 },
+  { data_type => 'tinyint', extra => { unsigned => 1 }, is_nullable => 1 },
   'path',
   { data_type => 'varchar', is_nullable => 1, size => 256 },
   'metrics_file',
@@ -233,7 +260,11 @@ __PACKAGE__->add_columns(
   'info',
   { data_type => 'text', is_nullable => 1 },
   'tag_index',
-  { data_type => 'bigint', default_value => -1, is_nullable => 0 },
+  { data_type => 'bigint', is_nullable => 1 },
+  'tag_hops_percent',
+  { data_type => 'float', extra => { unsigned => 1 }, is_nullable => 1 },
+  'tag_hops_power',
+  { data_type => 'float', extra => { unsigned => 1 }, is_nullable => 1 },
 );
 
 =head1 PRIMARY KEY
@@ -250,28 +281,40 @@ __PACKAGE__->set_primary_key('id_tag_metrics');
 
 =head1 UNIQUE CONSTRAINTS
 
-=head2 C<unq_run_lane_tagmetrics>
+=head2 C<tag_metrics_compos_ind_unique>
 
 =over 4
 
-=item * L</id_run>
-
-=item * L</position>
-
-=item * L</tag_index>
+=item * L</id_seq_composition>
 
 =back
 
 =cut
 
-__PACKAGE__->add_unique_constraint(
-  'unq_run_lane_tagmetrics',
-  ['id_run', 'position', 'tag_index'],
+__PACKAGE__->add_unique_constraint('tag_metrics_compos_ind_unique', ['id_seq_composition']);
+
+=head1 RELATIONS
+
+=head2 seq_composition
+
+Type: belongs_to
+
+Related object: L<npg_qc::Schema::Result::SeqComposition>
+
+=cut
+
+__PACKAGE__->belongs_to(
+  'seq_composition',
+  'npg_qc::Schema::Result::SeqComposition',
+  { id_seq_composition => 'id_seq_composition' },
+  { is_deferrable => 1, on_delete => 'NO ACTION', on_update => 'NO ACTION' },
 );
 
 =head1 L<Moose> ROLES APPLIED
 
 =over 4
+
+=item * L<npg_qc::Schema::Composition>
 
 =item * L<npg_qc::Schema::Flators>
 
@@ -284,17 +327,25 @@ __PACKAGE__->add_unique_constraint(
 =cut
 
 
-with 'npg_qc::Schema::Flators', 'npg_qc::autoqc::role::result', 'npg_qc::autoqc::role::tag_metrics';
+with 'npg_qc::Schema::Composition', 'npg_qc::Schema::Flators', 'npg_qc::autoqc::role::result', 'npg_qc::autoqc::role::tag_metrics';
 
 
-# Created by DBIx::Class::Schema::Loader v0.07045 @ 2016-06-30 15:33:28
-# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:yAs47z1KaagzQh1gWvdmTg
-
-__PACKAGE__->set_flators4non_scalar(qw( tags reads_count reads_pf_count perfect_matches_count perfect_matches_pf_count one_mismatch_matches_count one_mismatch_matches_pf_count matches_percent matches_pf_percent info ));
-__PACKAGE__->set_inflator4scalar('tag_index');
-
+# Created by DBIx::Class::Schema::Loader v0.07048 @ 2018-04-10 14:09:37
+# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:01BT+8rbCPfUeB3ItyFNjQ
 
 our $VERSION = '0';
+
+__PACKAGE__->set_flators4non_scalar(
+  qw( tags reads_count reads_pf_count perfect_matches_count perfect_matches_pf_count
+      one_mismatch_matches_count one_mismatch_matches_pf_count matches_percent
+      matches_pf_percent info ));
+
+__PACKAGE__->has_many(
+  'seq_component_compositions',
+  'npg_qc::Schema::Result::SeqComponentComposition',
+  { 'foreign.id_seq_composition' => 'self.id_seq_composition' },
+  { cascade_copy => 0, cascade_delete => 0 },
+);
 
 __PACKAGE__->meta->make_immutable;
 
@@ -312,6 +363,18 @@ Result class definition in DBIx binding for npg-qc database.
 =head1 CONFIGURATION AND ENVIRONMENT
 
 =head1 SUBROUTINES/METHODS
+
+=head2 composition
+
+Attribute of type npg_tracking::glossary::composition.
+
+=head2 seq_component_compositions
+
+Type: has_many
+
+Related object: L<npg_qc::Schema::Result::SeqComponentComposition>
+
+To simplify queries, skip SeqComposition and link directly to the linking table.
 
 =head1 DEPENDENCIES
 
@@ -347,7 +410,7 @@ Marina Gourtovaia E<lt>mg8@sanger.ac.ukE<gt>
 
 =head1 LICENSE AND COPYRIGHT
 
-Copyright (C) 2016 GRL
+Copyright (C) 2017 GRL
 
 This file is part of NPG.
 

@@ -1,12 +1,5 @@
-#########
-# Author:        gq1
-# Created:       10 November 2009
-#
-
 package npg_qc::autoqc::checks::sequence_error;
 
-use strict;
-use warnings;
 use Moose;
 use namespace::autoclean;
 use Readonly;
@@ -15,7 +8,7 @@ use English qw(-no_match_vars);
 use File::Basename;
 use File::Spec::Functions qw(catfile);
 
-use npg_common::extractor::fastq qw(generate_equally_spaced_reads);
+use npg_common::extractor::fastq qw(read_count);
 use npg_common::Alignment;
 use npg_qc::autoqc::types;
 extends qw(npg_qc::autoqc::checks::check);
@@ -24,7 +17,7 @@ with qw(
   npg_common::roles::SequenceInfo
   npg_common::roles::software_location
 );
-
+has '+aligner' => (default => 'bwa0_6', is => 'ro');
 
 our $VERSION = '0';
 ## no critic (Documentation::RequirePodAtEnd ProhibitParensWithBuiltins ProhibitStringySplit RequireNumberSeparators)
@@ -127,17 +120,18 @@ override 'execute'    => sub {
 
   my $self = shift;
 
-  if(!super()) {return 1;}
+  super();
+
   if(!$self->reference()){
     return 1;
   }
-  $self->bwa_cmd;
+  $self->bwa0_6_cmd;
   $self->process_all_fastqs();
 
   if (defined $self->_actual_sample_size) {
     $self->result->reference($self->reference);
-    $self->result->set_info( 'Aligner', $self->bwa_cmd );
-    $self->result->set_info( 'Aligner_version',  $self->current_version($self->bwa_cmd) );
+    $self->result->set_info( 'Aligner', $self->bwa0_6_cmd );
+    $self->result->set_info( 'Aligner_version',  $self->current_version($self->bwa0_6_cmd) );
 
     if($self->aligner_options()){
       $self->result->set_info( 'Aligner_options', $self->aligner_options() );
@@ -162,7 +156,6 @@ sub _calc_and_set_pass {
   }
   return;
 }
-
 
 sub process_all_fastqs{
   my $self = shift;
@@ -191,12 +184,9 @@ sub process_one_fastq{
   #prepare temp file names
   my $out_dir = $self->tmp_path;
   my ($filename, $directories, $suffix) = fileparse($fastq, qr{.fastq}mxs);
+  my $sam_out = catfile($out_dir, $filename.q{.sam});
 
-  my $part_fastq = catfile($out_dir, $filename.q{_part.fastq});
-  my $part_sam_out = catfile($out_dir, $filename.q{_part.sam});
-
-  #extract part reads from fastq file
-  my $actual_sample_size = generate_equally_spaced_reads([$fastq], [$part_fastq], $self->sample_size);
+  my $actual_sample_size = read_count($fastq);
   eval {
     $self->_set_actual_sample_size($actual_sample_size);
     1;
@@ -204,16 +194,16 @@ sub process_one_fastq{
     $self->result->add_comment(qq[Too few reads in $fastq? Number of reads $actual_sample_size] . q[.]);
     return 1;
   };
-  #use extracted part fastq, doing alignment
+  #use input fastq, doing alignment
   my $alignment = npg_common::Alignment->new(
-                               $self->resolved_paths(), #propagate bwa command
+                               bwa_cmd => $self->bwa0_6_cmd, #propagate bwa command
                                bwa_options => $self->aligner_options(),
                              );
   eval{
 
     $alignment->bwa_align_se({
-      fastq => $part_fastq,
-      bam_out => $part_sam_out,
+      fastq => $fastq,
+      bam_out => $sam_out,
       ref_root => $self->reference(),
     });
     1;
@@ -223,7 +213,7 @@ sub process_one_fastq{
 
   my $results_hash = {};
   eval{
-    $results_hash = $self->parsing_sam($part_sam_out, $fastq_direction);
+    $results_hash = $self->parsing_sam($sam_out, $fastq_direction);
     1;
   } or do{
     croak q[Error when parsing sam file: ].$EVAL_ERROR;
@@ -345,12 +335,10 @@ sub parsing_sam{
       $self->_add_array($count_total, $count);
 
       if( $num_reads_aligned == 0 ){
-
         $read_length = $current_read_length;
       }
 
       if( $read_length != $current_read_length ){
-
         croak "different read length in the alignment: $sam\n:$md ".$cigar ;
       }
 
@@ -366,15 +354,11 @@ sub parsing_sam{
       }
 
     }else{
-
       $num_reads_not_aligned++;
     }
   }
 
-  close $sam_fh or croak "can not close file $sam: $ERRNO";
-
-  print "$num_reads_aligned reads aligned, $num_reads_not_aligned reads not aligned, read_length: $read_length\n"
-  or carp "can't print on stdout for$ERRNO";
+  close $sam_fh or croak "cannot close file $sam: $ERRNO";
 
   foreach my $base_count ( @{ $n_count_by_base } ) {
     $base_count ||= 0;
@@ -396,7 +380,6 @@ sub parsing_sam{
       _extract_per_cycle_count_listref_for_cigar_char($cig_vs_cycle_count_pdl, $_)
     } split q(),$CIGAR_VALID_CHAR},
   };
-
 }
 
 sub _reverse_cigar {
@@ -483,7 +466,6 @@ sub parsing_md_string{
       $match_array[$base_index] = 0;
       $base_index++;
     }
-
   }
   return \@match_array;
 }
@@ -691,7 +673,7 @@ npg_qc::autoqc::checks::sequence_error
 
 =item npg_common::Alignment
 
-=item npg_common::extractor::fastq qw(generate_equally_spaced_reads)
+=item npg_common::extractor::fastq qw(read_count)
 
 =item npg_common::roles::software_location
 
@@ -707,24 +689,48 @@ npg_qc::autoqc::checks::sequence_error
 
 =head1 SUBROUTINES/METHODS
 
-=head2 check_read_orientation - parsing flag field in sam file, return the orientation of the alignment
+=head2 check_read_orientation
 
-=head2 matches_per_base - given md, cigar string, and flag for each read, return an array of 0 and 1 values. 0 for not- mismatch and 1 for mismatch.
-Parsing md string first and add positions of insertion, soft and hard clipping,  as not mismatch. And then reverse it if necessary based on flag
+  parsing flag field in sam file, return the orientation of the alignment
 
-=head2 matches_per_base_eland - the export output of eland no gap and no need reverse the md string, md string enough to check mismatch
+=head2 matches_per_base
 
-=head2 modify_match_by_cigar - there is no insertion clipping information in md string, modify the mismatch array by checking cigar string 
+  given md, cigar string, and flag for each read, return an array of 0 and 1 values.
+  0 for not- mismatch and 1 for mismatch.
+  Parsing md string first and add positions of insertion, soft and hard clipping,
+  as not mismatch. And then reverse it if necessary based on flag
 
-=head2 parsing_md_string - given a md string, return an array of 0 and 1, 0 for not- mismatch and 1 for mismatch. Ignore the deletion in the read
+=head2 matches_per_base_eland
 
-=head2 parsing_md_string_eland - md string in eland not follow the latest sam specification
+  the export output of eland no gap and no need reverse the md string, md string
+  enough to check mismatch
 
-=head2 parsing_sam - given a sam file, return an array, representing the total number of mismatch for each cycle
+=head2 modify_match_by_cigar
 
-=head2 process_all_fastqs - process all fastq files
+  there is no insertion clipping information in md string, modify the mismatch
+  array by checking cigar string 
 
-=head2 process_one_fastq - process one fastq
+=head2 parsing_md_string
+
+  given a md string, return an array of 0 and 1, 0 for not- mismatch and 1 for mismatch.
+  Ignore the deletion in the read
+
+=head2 parsing_md_string_eland
+
+  md string in eland not follow the latest sam specification
+
+=head2 parsing_sam
+
+  given a sam file, return an array,
+  representing the total number of mismatch for each cycle
+
+=head2 process_all_fastqs
+
+  process all fastq files
+
+=head2 process_one_fastq
+
+  process one fastq
 
 =head1 INCOMPATIBILITIES
 
@@ -736,7 +742,7 @@ Guoying Qi E<lt>gq1@sanger.ac.ukE<gt>
 
 =head1 LICENSE AND COPYRIGHT
 
-Copyright (C) 2010 GRL, by Marina Gourtovaia
+Copyright (C) 2016 GRL
 
 This file is part of NPG.
 

@@ -1,0 +1,75 @@
+[% USE Number.Format(THOUSANDS_SEP=',') %]
+
+[% IF !check.genes_detected.defined; %]
+     <div class="data_table">
+     <table title="rna_seqc summary info">
+     [% IF check.comments -%]
+          <tr><th class="laligned">Comments</th><td>[% check.comments %]</td></tr>
+     [%- END %]
+     </table>
+     </div>
+[% ELSE %]
+     <h6>mapped reads</h6>
+     <div style='clear:both;' class="data_table">
+     <table title="mapped_reads">
+     <tr><th>rRNA</th><th>rRNA rate</th></tr>
+     <tr><td align="right">[% IF check.rrna.defined; check.rrna | format_number; END %]</td>
+         <td align="right">[% IF check.rrna_rate.defined; check.rrna_rate | format_number(3,1); END %]</td>
+     </tr>
+     </table>
+     </div>
+     <h6>transcript-associated reads</h6>
+     <div style='clear:both;' class="data_table">
+     <table title=transcript_associated_reads>
+     <tr><th>exonic rate</th><th>expression profiling efficiency</th><th>transcripts/genes detected</th>
+     <tr><td align="right">[% IF check.exonic_rate.defined; check.exonic_rate | format_number(3,1); END %]</td>
+         <td align="right">[% IF check.expression_profiling_efficiency.defined; check.expression_profiling_efficiency | format_number(3,1); END %]</td>
+         <td align="right">[% IF check.genes_detected.defined; check.genes_detected | format_number; END %]</td>
+     </tr>
+     </table>
+     </div>
+     <h6>strand specificity</h6>
+     <div style='clear:both;' class="data_table">
+     <table title=strand_specificity>
+     <tr><th>end 1 sense</th><th>end 1 antisense</th><th>end 2 sense</th><th>end 2 antisense</th><th>end 1 % sense</th><th>end 2 % sense</th></tr>
+     <tr><td align="right">[% IF check.end_1_sense.defined; check.end_1_sense | format_number; END %]</td>
+         <td align="right">[% IF check.end_1_antisense.defined; check.end_1_antisense | format_number; END %]</td>
+         <td align="right">[% IF check.end_2_sense.defined; check.end_2_sense | format_number; END %]</td>
+         <td align="right">[% IF check.end_2_antisense.defined; check.end_2_antisense | format_number; END %]</td>
+         <td align="right">[% IF check.end_1_pct_sense.defined; check.end_1_pct_sense | format_number(3,1); END %]</td>
+         <td align="right">[% IF check.end_2_pct_sense.defined; check.end_2_pct_sense | format_number(3,1); END %]</td>
+     </tr>
+     </table>
+     </div>
+     <h6>coverage metrics</h6>
+     <div style='clear:both;' class="data_table">
+     <table title=coverage_metrics>
+     <tr><th>mean per base cov.</th><th>mean CV</th><th>covered 3' (norm)</th><th>covered 5' (norm)</th></tr>
+     <tr><td align="right">[% IF check.mean_per_base_cov.defined; check.mean_per_base_cov | format_number(2,1); END %]</td>
+         <td align="right">[% IF check.mean_cv.defined; check.mean_cv | format_number(2,1); END %]</td>
+         <td align="right">[% IF check.end_3_norm.defined; check.end_3_norm | format_number(3,1); END %]</td>
+         <td align="right">[% IF check.end_5_norm.defined; check.end_5_norm | format_number(3,1); END %]</td>
+     </tr>
+     </table>
+     </div>
+     <h6>gene metrics</h6>
+     <div style='clear:both;' class="data_table">
+     <table title=gene_metrics>
+     <tr><th>globin % TPM</th><th>mitochondrial % TPM</th></tr>
+     <tr><td align="right">[% IF check.globin_pct_tpm.defined; check.globin_pct_tpm | format_number(3,1); ELSE %]<span>na</span>[% END %]</td>
+         <td align="right">[% IF check.mt_pct_tpm.defined; check.mt_pct_tpm | format_number(3,1); ELSE %]<span>na</span>[% END %]</td>
+     </tr>
+     </table>
+     </div>
+[% run_is_on_staging = c.model('NpgDB').resultset('Run').find(id_run).is_tag_set('staging');
+   IF run_is_on_staging; %]
+     <div>
+      [% base = base_url _ '/cgi-bin/locate_runfolder';
+         dir = check.rna_seqc_report_path || '';
+         dir = dir.replace('/analysis/', '/*/');
+         dir = dir.replace('/outgoing/', '/*/');
+         dir = base_url _ '/cgi-bin/locate_runfolder/' _ dir; %]
+       Other RNA-SeQC <a href="[% dir | url %]?redir">metrics</a>
+     </div>
+[% END %]
+[% END %]

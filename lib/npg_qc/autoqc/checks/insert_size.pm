@@ -11,30 +11,27 @@ use File::Spec::Functions qw(catfile);
 use Math::Round qw(round);
 use List::Util;
 use Perl6::Slurp;
+use Try::Tiny;
 
-#########################################################
-# 'extends' should prepend 'with' since the
-# fields required by the npg_qc::autoqc::align::reference
-# role are defined there; there is a bug in Moose::Role
-#########################################################
+use npg_qc::autoqc::types;
+use npg_qc::autoqc::parse::alignment;
+use npg_qc::autoqc::results::insert_size;
+use npg_common::Alignment;
+use npg_common::extractor::fastq qw(read_count);
+
 extends qw(npg_qc::autoqc::checks::check);
 with qw(
   npg_tracking::data::reference::find
   npg_common::roles::software_location
        );
-
-use npg::api::run;
-use npg_qc::autoqc::types;
-use npg_qc::autoqc::parse::alignment;
-use npg_qc::autoqc::results::insert_size;
-use npg_common::Alignment;
-use npg_common::extractor::fastq qw(generate_equally_spaced_reads);
+has '+aligner' => (default => 'bwa0_6', is => 'ro');
 
 our $VERSION = '0';
 
-Readonly::Scalar my $NORM_FIT_EXE                           => q[norm_fit];
-Readonly::Scalar my $NORM_FIT_MIN_PROPERLY_ALIGNED_PAIRS    => 5000;
-Readonly::Scalar my $NORM_FIT_MAX_BIN_THRESHOLD             => 0.9;
+Readonly::Scalar my $NORM_FIT_EXE                        => q[norm_fit];
+Readonly::Scalar my $NORM_FIT_MIN_PROPERLY_ALIGNED_PAIRS => 5000;
+Readonly::Scalar my $NORM_FIT_MAX_BIN_THRESHOLD          => 0.9;
+Readonly::Scalar my $NORM_FIT_CONFIDENCE_PASS_LEVEL      => 0.0;
 
 ## no critic (Documentation::RequirePodAtEnd RequireCheckingReturnValueOfEval ProhibitParensWithBuiltins RequireNumberSeparators)
 =head1 NAME
@@ -43,19 +40,21 @@ npg_qc::autoqc::checks::insert_size
 
 =head1 SYNOPSIS
 
-Inherits from npg_qc::autoqc::checks::check. See description of attributes in the documentation for that module.
+Inherits from npg_qc::autoqc::checks::check.
+See description of attributes in the documentation for that module.
+
   my $check = npg_qc::autoqc::checks::insert_size->new(
-          path => q[/staging/IL29/analysis/090721_IL29_3379/data], position => 1
+          qc_in => q[/staging/IL29/analysis/090721_IL29_3379/data], position => 1
                                                       );
 
 =head1 DESCRIPTION
 
-An insert size check performs paired alignment in order to determine the actual insert size, which is then compared to the insert size requested by the user.
+An insert size check performs paired alignment in order to determine the actual
+insert size, which is then compared to the insert size requested by the user.
 
 =head1 SUBROUTINES/METHODS
 
 =cut
-
 
 Readonly::Scalar our $NUM_READS              => 10000;
 Readonly::Scalar our $THOUSAND               => 1000;
@@ -64,17 +63,6 @@ Readonly::Scalar our $MAX_ISIZE_COEFF        => 2;
 Readonly::Scalar our $CHILD_ERROR_SHIFT      => 8;
 
 our $_alignment_count = 0; ## no critic (Variables::ProhibitPackageVars)
-
-=head2 sample_size
-
-Number of reads aligned
-
-=cut
-has 'sample_size' => (isa         => 'Maybe[SampleSize4Aligning]',
-                      is          => 'ro',
-                      required    => 0,
-                      default     => $NUM_READS,
-                     );
 
 =head2 actual_sample_size
 
@@ -102,7 +90,7 @@ has 'aligner_options' => (isa             => 'Str',
 
 =head2 use_reverse_complemented
 
-a boolen flag to indicate whether reverse complemented fastq files should be produced,
+A boolen flag to indicate whether reverse complemented fastq files should be produced,
 aligned and analysed, defaults to 1
  
 =cut
@@ -128,14 +116,13 @@ sub _build_expected_size {
     my $self = shift;
 
     my $sizes_hash;
-    eval {
-	$sizes_hash = $self->lims->required_insert_size;
-        1;
-    } or do {
-        $self->result->add_comment($EVAL_ERROR);
-        return;
+    try {
+        $sizes_hash = $self->lims->required_insert_size;
+    } catch {
+      carp $_;
+        $self->result->add_comment($_);
     };
-    if (keys %{$sizes_hash} == 0) {
+    if (!defined $sizes_hash || (keys %{$sizes_hash} == 0)) {
         $self->result->add_comment('Expected insert size is not defined');
         return;
     }
@@ -156,27 +143,22 @@ has 'reference'   => (isa         => 'Maybe[Str]',
 
 sub _build_reference {
     my $self = shift;
-    my @refs;
-    eval {
+    my @refs = ();
+    try {
         @refs = @{$self->refs()};
+    } catch {
+        $self->result->add_comment(
+        q[Error: binary reference cannot be retrieved; cannot run insert size check. ] . $_);
     };
-    if ($EVAL_ERROR) {
-        $self->result->add_comment(q[Error: binary reference cannot be retrieved; cannot run insert size check. ] . $EVAL_ERROR);
-        return;
-    }
 
     if ($self->messages->count) {
         $self->result->add_comment(join(q[ ], $self->messages->messages));
     }
-
     if (scalar @refs > 1) {
-	$self->result->add_comment(q[multiple references found: ] . join(q[;], @refs));
-        return;
+	      $self->result->add_comment(q[multiple references found: ] . join(q[;], @refs));
     }
-
     if (scalar @refs == 0) {
         $self->result->add_comment(q[Failed to retrieve binary reference.]);
-        return;
     }
     return (pop @refs);
 }
@@ -193,9 +175,19 @@ has 'format'          => (isa             => 'Str',
                           default         => q[sam],
                          );
 
-=head2 format
+=head2 is_paired_read
 
-format for paired alignment
+Boolean flag indicating whether both a forward and reverse reads are present.
+Defaults to true.
+ 
+=cut
+
+has 'is_paired_read'  => (isa     => 'Bool',
+                          is      => 'ro',
+                          default => 1,
+                         );
+
+=head2 norm_fit_cmd
  
 =cut
 
@@ -208,15 +200,26 @@ has 'norm_fit_cmd' => (
 
 override 'can_run'            => sub {
   my $self = shift;
-  return npg::api::run->new({id_run => $self->id_run})->is_paired_read();
+
+  if($self->lims->gbs_plex_name){
+    $self->result->add_comment('Insert size skipped for gbs plex libraries.');
+    return 0;
+  }
+  if(! $self->is_paired_read()){
+    $self->result->add_comment('Single end run');
+    return 0;
+  }
+
+  return 1;
 };
 
 override 'execute'            => sub {
   my $self = shift;
-  if(!super()) {return 1;}
+
+  super();
 
   if (!$self->can_run) {
-      $self->result->add_comment(q[Single run. Cannot run insert size check.]);
+      $self->result->add_comment(q[Cannot run insert size check.]);
       return 1;
   }
 
@@ -226,10 +229,10 @@ override 'execute'            => sub {
 
   if (!$self->reference) { return 1; }
 
-  $self->result->set_info( 'Aligner', $self->bwa_cmd() );
-  $self->result->set_info( 'Aligner_version',  $self->current_version( $self->bwa_cmd() ) );
+  $self->result->set_info( 'Aligner', $self->bwa0_6_cmd() );
+  $self->result->set_info( 'Aligner_version',  $self->current_version( $self->bwa0_6_cmd() ) );
   if($self->aligner_options()){
-    $self->result->set_info( 'Aligner_options', $self->aligner_options() );
+      $self->result->set_info( 'Aligner_options', $self->aligner_options() );
   }
   $self->_set_additional_modules_info();
 
@@ -246,17 +249,19 @@ override 'execute'            => sub {
       push @input, $self->_align($self->_fastq_reverse_complement($sample_reads));
   }
 
-  eval {
+  try {
       npg_qc::autoqc::parse::alignment->new(
           files2parse  => \@input,
       )->generate_insert_sizes($self->result);
       1;
-  } or do {
-      $self->result->add_comment($EVAL_ERROR);
+  } catch {
+      $self->result->add_comment($_);
       $self->result->pass(0);
-      return 1;
   };
 
+  if (defined $self->result->pass() && $self->result->pass() == 0) {
+      return 1;
+  }
   if (!$self->result->num_well_aligned_reads) {
       $self->result->add_comment(q[No results returned from aligning]);
       $self->result->pass(0);
@@ -308,6 +313,7 @@ override 'execute'            => sub {
 
   my @lines = slurp $output;
 
+  my $norm_fit_pass;
   my @modes = ();
   foreach my $line (@lines) {
       if ($line =~ /^\#/xms) {
@@ -319,7 +325,7 @@ override 'execute'            => sub {
           } elsif ($name eq q[confidence]) {
               $self->result->norm_fit_confidence($value);
           } elsif ($name eq q[pass]) {
-              $self->result->norm_fit_pass($value);
+              $norm_fit_pass = $value;
           }
       } else {
           # all other lines are assumed to contain amplitude, mean and optionally std for each mode
@@ -329,6 +335,9 @@ override 'execute'            => sub {
       }
   }
   $self->result->norm_fit_modes(\@modes);
+  if($self->result->norm_fit_confidence > $NORM_FIT_CONFIDENCE_PASS_LEVEL) {
+    $self->result->norm_fit_pass($norm_fit_pass);
+  }
 
   return 1;
 };
@@ -364,23 +373,20 @@ sub _read_insert_size_hash {
     foreach my $key (keys %{$sizes_hash}) {
         foreach my $boundary (qw/ from to /) {
             if (exists $sizes_hash->{$key}->{$boundary}) {
-	        my $value = $sizes_hash->{$key}->{$boundary};
+                my $value = $sizes_hash->{$key}->{$boundary};
                 if (defined $value) {
                     $value = $self->_enforce_number($value);
                     if ($value > 0) {
                         push @sizes, $value;
-		    }
-	        }
+                    }
+                }
             }
         }
     }
 
     if (!@sizes) {
-        my $message = q[Could not determine expected size for run ] . $self->id_run . q[ lane ] .$self->position;
-        if (defined $self->tag_index) {
-            $message .= q[ tag index ] . defined $self->tag_index;
-	}
-        $self->result->add_comment($message);
+        $self->result->add_comment(
+            q[Could not determine expected size for ] . $self->to_string());
         return \@sizes;
     }
 
@@ -402,30 +408,23 @@ sub _expected_single_value2expected_range {
 sub _generate_sample_reads {
     my ($self) = @_;
 
-    my $fqe1 =  catfile($self->tmp_path, q[1.fastq]);
-    my $fqe2 =  catfile($self->tmp_path, q[2.fastq]);
+    my $fqe1 = $self->input_files->[0];
+    my $fqe2 = $self->input_files->[1];
 
-    my $actual_sample_size;
-    eval {
-        $actual_sample_size = generate_equally_spaced_reads($self->input_files, [$fqe1, $fqe2], $self->sample_size);
-        1;
-    } or do {
-        my $error = $EVAL_ERROR;
-        if ($error =~ /reads[ ]are[ ]out[ ]of[ ]order/ismx) { croak $error; }
-        $self->result->add_comment($error);
-        return;
-    };
+    my $actual_sample_size = read_count($fqe1);
+    if (defined $actual_sample_size) {
+        try {
+            $self->_set_actual_sample_size($actual_sample_size);
+        } catch {
+            $self->result->add_comment(q[Too few reads in ] . $self->input_files->[0] .q[? Number of reads ] . $actual_sample_size . q[.]);
+        };
+    }
+    if (defined $self->actual_sample_size) {
+        $self->result->sample_size($self->actual_sample_size);
+        return [$fqe1, $fqe2];
+    }
 
-    eval {
-        $self->_set_actual_sample_size($actual_sample_size);
-        1;
-    } or do {
-        $self->result->add_comment(q[Too few reads in ] . $self->input_files->[0] .q[? Number of reads ] . $actual_sample_size . q[.]);
-        return;
-    };
-    $self->result->sample_size($self->actual_sample_size);
-
-    return [$fqe1, $fqe2];
+    return;
 }
 
 sub _fastq_reverse_complement {
@@ -437,8 +436,7 @@ sub _fastq_reverse_complement {
         my @args = (q[fastx_reverse_complement], q[-Q 33], q[-i], $sample_reads->[$i], q[-o], $reversed[$i]);
         print 'Producing reverse complemented file: ' . (join q[ ], @args) . qq[\n] || carp 'Producing reverse complemented file: ' . (join q[ ], @args) . qq[\n];
         if (system(@args)) {
-            my $error =  printf "Child %s exited with value %d\n", join(q[ ], @args), $CHILD_ERROR >> $CHILD_ERROR_SHIFT;
-            croak $error;
+            croak  printf "Child %s exited with value %d\n", join(q[ ], @args), $CHILD_ERROR >> $CHILD_ERROR_SHIFT;
         }
     }
     return \@reversed;
@@ -471,7 +469,7 @@ sub _fastx_version {
         if ($line =~ /FASTX\ Toolkit/xms) {
             my ($version) = $line =~ /\ (\d+\.\d+\.\d+)\ /xms;
             if ($version) { return $version; }
-	}
+        }
     }
     return q[];
 }
@@ -481,7 +479,7 @@ sub _align {
 
     $_alignment_count++;
     my $output_sam = catfile($self->tmp_path, $_alignment_count . q[isize.sam]);
-    my $al = npg_common::Alignment->new($self->resolved_paths());
+    my $al = npg_common::Alignment->new({bwa_cmd => $self->bwa0_6_cmd}); # propagate bwa command
     $al->bwa_align_pe({ref_root => $self->reference, fastq1 => $sample_reads->[0], fastq2 => $sample_reads->[1], sam_out => $output_sam, fork_align => 0,});
     return $output_sam;
 }
@@ -518,13 +516,17 @@ __END__
 
 =item List::Util
 
-=item npg::api::run
+=item Perl6::Slurp
+
+=item Try::Tiny
 
 =item npg_tracking::data::reference::find
 
 =item npg_common::extractor::fastq
 
 =item npg_common::Alignment
+
+=item npg_common::roles::software_location
 
 =back
 
@@ -538,7 +540,7 @@ Marina Gourtovaia E<lt>mg8@sanger.ac.ukE<gt>
 
 =head1 LICENSE AND COPYRIGHT
 
-Copyright (C) 2015 GRL, by Marina Gourtovaia
+Copyright (C) 2018 GRL
 
 This file is part of NPG.
 

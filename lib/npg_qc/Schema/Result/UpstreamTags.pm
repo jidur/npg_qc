@@ -61,17 +61,26 @@ __PACKAGE__->table('upstream_tags');
   is_auto_increment: 1
   is_nullable: 0
 
+=head2 id_seq_composition
+
+  data_type: 'bigint'
+  extra: {unsigned => 1}
+  is_foreign_key: 1
+  is_nullable: 0
+
+A foreign key referencing the id_seq_composition column of the seq_composition table
+
 =head2 id_run
 
   data_type: 'bigint'
   extra: {unsigned => 1}
-  is_nullable: 0
+  is_nullable: 1
 
 =head2 position
 
   data_type: 'tinyint'
   extra: {unsigned => 1}
-  is_nullable: 0
+  is_nullable: 1
 
 =head2 barcode_file
 
@@ -148,8 +157,7 @@ __PACKAGE__->table('upstream_tags');
 =head2 tag_index
 
   data_type: 'bigint'
-  default_value: -1
-  is_nullable: 0
+  is_nullable: 1
 
 =cut
 
@@ -161,10 +169,17 @@ __PACKAGE__->add_columns(
     is_auto_increment => 1,
     is_nullable => 0,
   },
+  'id_seq_composition',
+  {
+    data_type => 'bigint',
+    extra => { unsigned => 1 },
+    is_foreign_key => 1,
+    is_nullable => 0,
+  },
   'id_run',
-  { data_type => 'bigint', extra => { unsigned => 1 }, is_nullable => 0 },
+  { data_type => 'bigint', extra => { unsigned => 1 }, is_nullable => 1 },
   'position',
-  { data_type => 'tinyint', extra => { unsigned => 1 }, is_nullable => 0 },
+  { data_type => 'tinyint', extra => { unsigned => 1 }, is_nullable => 1 },
   'barcode_file',
   { data_type => 'varchar', is_nullable => 1, size => 128 },
   'path',
@@ -194,7 +209,7 @@ __PACKAGE__->add_columns(
   'info',
   { data_type => 'text', is_nullable => 1 },
   'tag_index',
-  { data_type => 'bigint', default_value => -1, is_nullable => 0 },
+  { data_type => 'bigint', is_nullable => 1 },
 );
 
 =head1 PRIMARY KEY
@@ -211,28 +226,40 @@ __PACKAGE__->set_primary_key('id_upstream_tags');
 
 =head1 UNIQUE CONSTRAINTS
 
-=head2 C<unq_run_lane_upstreamtags>
+=head2 C<upstream_tags_compos_ind_unique>
 
 =over 4
 
-=item * L</id_run>
-
-=item * L</position>
-
-=item * L</tag_index>
+=item * L</id_seq_composition>
 
 =back
 
 =cut
 
-__PACKAGE__->add_unique_constraint(
-  'unq_run_lane_upstreamtags',
-  ['id_run', 'position', 'tag_index'],
+__PACKAGE__->add_unique_constraint('upstream_tags_compos_ind_unique', ['id_seq_composition']);
+
+=head1 RELATIONS
+
+=head2 seq_composition
+
+Type: belongs_to
+
+Related object: L<npg_qc::Schema::Result::SeqComposition>
+
+=cut
+
+__PACKAGE__->belongs_to(
+  'seq_composition',
+  'npg_qc::Schema::Result::SeqComposition',
+  { id_seq_composition => 'id_seq_composition' },
+  { is_deferrable => 1, on_delete => 'NO ACTION', on_update => 'NO ACTION' },
 );
 
 =head1 L<Moose> ROLES APPLIED
 
 =over 4
+
+=item * L<npg_qc::Schema::Composition>
 
 =item * L<npg_qc::Schema::Flators>
 
@@ -245,17 +272,22 @@ __PACKAGE__->add_unique_constraint(
 =cut
 
 
-with 'npg_qc::Schema::Flators', 'npg_qc::autoqc::role::result', 'npg_qc::autoqc::role::upstream_tags';
+with 'npg_qc::Schema::Composition', 'npg_qc::Schema::Flators', 'npg_qc::autoqc::role::result', 'npg_qc::autoqc::role::upstream_tags';
 
 
-# Created by DBIx::Class::Schema::Loader v0.07045 @ 2016-06-30 15:33:28
-# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:0jS4rTFYFipbjGK7PS9V7w
-
-__PACKAGE__->set_flators4non_scalar(qw( unexpected_tags prev_runs info ));
-__PACKAGE__->set_inflator4scalar('tag_index');
-
+# Created by DBIx::Class::Schema::Loader v0.07047 @ 2017-09-14 16:25:18
+# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:VjcBJxeNEyHRqcsAeV3qUg
 
 our $VERSION = '0';
+
+__PACKAGE__->set_flators4non_scalar(qw( unexpected_tags prev_runs info ));
+
+__PACKAGE__->has_many(
+  'seq_component_compositions',
+  'npg_qc::Schema::Result::SeqComponentComposition',
+  { 'foreign.id_seq_composition' => 'self.id_seq_composition' },
+  { cascade_copy => 0, cascade_delete => 0 },
+);
 
 __PACKAGE__->meta->make_immutable;
 
@@ -273,6 +305,18 @@ Result class definition in DBIx binding for npg-qc database.
 =head1 CONFIGURATION AND ENVIRONMENT
 
 =head1 SUBROUTINES/METHODS
+
+=head2 composition
+
+Attribute of type npg_tracking::glossary::composition.
+
+=head2 seq_component_compositions
+
+Type: has_many
+
+Related object: L<npg_qc::Schema::Result::SeqComponentComposition>
+
+To simplify queries, skip SeqComposition and link directly to the linking table.
 
 =head1 DEPENDENCIES
 
@@ -308,7 +352,7 @@ Marina Gourtovaia E<lt>mg8@sanger.ac.ukE<gt>
 
 =head1 LICENSE AND COPYRIGHT
 
-Copyright (C) 2016 GRL
+Copyright (C) 2017 GRL
 
 This file is part of NPG.
 

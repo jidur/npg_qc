@@ -149,6 +149,27 @@ __PACKAGE__->set_primary_key('id_seq_component');
 
 __PACKAGE__->add_unique_constraint('unq_seq_compon_d', ['digest']);
 
+=head2 C<unq_seq_compos_rp>
+
+=over 4
+
+=item * L</id_run>
+
+=item * L</position>
+
+=item * L</tag_index>
+
+=item * L</subset>
+
+=back
+
+=cut
+
+__PACKAGE__->add_unique_constraint(
+  'unq_seq_compos_rp',
+  ['id_run', 'position', 'tag_index', 'subset'],
+);
+
 =head1 RELATIONS
 
 =head2 seq_component_compositions
@@ -167,13 +188,64 @@ __PACKAGE__->has_many(
 );
 
 
-# Created by DBIx::Class::Schema::Loader v0.07043 @ 2015-09-09 16:20:06
-# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:wU4jPf38RcjAPVF+Boz3CQ
+# Created by DBIx::Class::Schema::Loader v0.07047 @ 2017-08-09 17:13:54
+# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:sjyVxeJ8u3jt8JvjEiP1uw
 
 
 # You can replace this text with custom code or comments, and it will be preserved on regeneration
 
 our $VERSION = '0';
+
+use Carp;
+use npg_tracking::glossary::composition::component::illumina;
+
+# Have serialization to JSON and rtp done for us
+with 'npg_tracking::glossary::composition::serializable' => {
+  -excludes => [qw/digest compute_digest thaw/]
+};
+
+=head2 unpack
+
+Implementation of a method required by the
+npg_tracking::glossary::composition::serializable role.
+
+=cut
+
+sub unpack { ## no critic(Subroutines::ProhibitBuiltinHomonyms)
+  croak 'Unpacking is not implemented';
+}
+
+=head2 pack
+
+Implementation of a method required by the
+npg_tracking::glossary::composition::serializable role.
+
+Returns a hash with main attributes of the object and their values.
+
+=cut
+
+sub pack { ## no critic(Subroutines::ProhibitBuiltinHomonyms)
+  my $self = shift;
+  my $h = {};
+  for my $column (qw/id_run position tag_index subset/) {
+    $h->{$column} = $self->$column;
+  }
+  return $h;
+}
+
+=head2 create_component
+
+Returns a component object npg_tracking::glossary::composition::component::illumina
+corresponding to this row.
+
+ my $illumina_component = $self->create_component();
+
+=cut
+
+sub create_component {
+  my $self = shift;
+  return npg_tracking::glossary::composition::component::illumina->thaw($self->freeze());
+}
 
 __PACKAGE__->meta->make_immutable;
 1;
@@ -213,6 +285,8 @@ Result class definition in DBIx binding for npg-qc database.
 
 =item DBIx::Class::InflateColumn::Serializer
 
+=item npg_tracking::glossary::composition::component::illumina
+
 =back
 
 =head1 INCOMPATIBILITIES
@@ -225,7 +299,7 @@ Marina Gourtovaia E<lt>mg8@sanger.ac.ukE<gt>
 
 =head1 LICENSE AND COPYRIGHT
 
-Copyright (C) 2015 GRL
+Copyright (C) 2017 GRL
 
 This file is part of NPG.
 

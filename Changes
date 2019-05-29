@@ -1,5 +1,328 @@
 LIST OF CHANGES FOR NPG-QC PACKAGE
 
+ - add target autosome stats to bam_flagstats qc check
+
+release 66.4
+ - allow to finalise undecided library manual qc outcomes for
+   all entities
+ - remove library type restriction from genotype_call can_run (retained as double check in seq_alignment)
+
+release 66.3
+ - sequence_summary table - extend storage for the header column
+ - remove fastqcheck database loader
+ - autoqc database deletion script update
+
+release 66.2
+ - SeqQC: heatmaps from samtools stats files as a source
+ - relax JSON parser (allow non-utf8 characters) when loading sequence_summary
+   results to the db
+ - ref match results sort order - make deterministic (important for consistency
+   of data we load to the warehouse), also add a method to return top two results
+ - fixes for composite genotype script following previous release 
+
+release 66.1.1
+ - composite genotype check script (call_gtck_composite_rpt.pl) search
+     for run folders disabled - only use iRODS cram files
+
+release 66.1
+ - autoqc results loader to check for potential composition digest clashes
+ - amend upstream_tags check to find previous runs which have reached
+     status "analysis complete" (instead of "run complete")
+
+release 66.0
+ - GUI for utility QC (inactive)
+ - add new bcfstats qc check + viewer change
+ - skip incomplete tag zero results in genotype_call POSTing to LIMs
+ - minor changes to genotype qc check to support checking against externally
+   supplied genotypes instead if they exist
+ - handle target samtools stats file - parsing, archiving and viewing.
+ - queries to qc_store should always have support for tracking db look-up
+ - methods for loading autoqc results moved from npg_qc::autoqc::collection
+   to npg_qc::autoqc::qc_store
+ - little-used method load_run of npg_qc::autoqc::qc_store class, which did
+   not support propagation of tracking db handle, is removed
+ - unused public methods in npg_qc::autoqc namespace removed
+ - mqc outcomes API - a new method, get_library_outcomes, for retrieving
+   library qc outcomes as boolean values
+ - deciding whether the entity is subject to manual QC:
+     remove special provisions for GCLP;
+     enforce that libraries and lanes cannot be qc-ed on the same page
+ - enable saving qc outcomes for multi-component compositions
+ - SeqQC GUI changes for multi-component compositions:
+     enable display of autoqc results;
+     enable manual QC
+ - changes to allow for SeqQC display of results corresponding to multi-
+   component compositions
+ - Illumina QC data loader restricted to loading cluster density data, its
+    data pre-loading functionality dropped
+ - amend spatial_filter check to take a directory name to search instead
+    of an explicit list of input files (that approach became unworkable
+    with highly plexed lanes)
+ - add result_file_path attribute to file-based result objects
+ - samtools stats file parser
+ - qX_yield and gc_fraction autoqc checks to use samtools stats files
+   instead of fastqcheck file
+ - SeqQC:
+     links for latest ivc and analysis removed since the target files are
+       no longer produced;
+     link for full rna seqc analysis follows info in the result object
+  - remove can_run restriction of verify_bam_id check for (cD|R)NA libraries
+
+release 65.4.1
+ - store value of output_dir from the RNA-SeQC check into the database
+
+release 65.4
+ - qX_yield autoqc check extension: capture and save yields for q30 and q40
+
+release 65.3
+ - fixed bug in cluster_density calculation where no TileMetrics interop
+   file exists
+
+release 65.2
+ - add new metric mitochondrial genes content as mt_pct_tpm to RNA-SeQC check
+ - can_run returns false for pulldown_metrics check for tag 0
+ - genotype check does not require the existence of irods: input_files
+
+release 65.1.1
+ - explicitly use pre v6 bwa for rna_seqc rRNA alignment as input not name sorted 
+   (tolerated in old version but not bwa0_6)
+
+release 65.1
+ - bwa to bwa0_6 for rna_seqc rRNA alignment
+
+release 65.0
+ - adapter autoqc check - discard code for fastq input
+ - add genotype_call_results_reporter script to report genotype_call
+   results to the LIMs
+ - tag_metics matches_pf_percent only stored to three decimals places now
+   so trim in viewer
+ - modified spatial filter qc check to read all run_lane filter.stats files
+ - changed naming of spatial_filter stats files to <run>_<lane>*.spatial_filter.stats
+ - upstream_tags qc check - replaced bamindexdecoder with bambi decode
+ - dropped ability for qc checks to sub-sample input fastq
+     instead run the checks directly off the cached fastq files
+ - NovaSeq changes, new InterOp file format and per lane read counts now 64-bit unsigned ints
+ - make travis happy as running apt-get update by default was disabled.
+ - NovaSeq run info file size is around 95KB, too large for the text column type.
+     Column type changed to mediumtext.
+ - upstream_tags autoqc check: standardise access to the tracking database
+ - 'execute' method of the parent autoqc check to error if input files do not exist
+ - dependency on tracking XML feeds removed
+ - bwa0_6 (newer bwa) expalicitly requested where bwa aligner is used
+ - all C source code moved to https://github.com/wtsi-npg/npg_qc_utils, executables are
+   built by Conda https://github.com/wtsi-npg/npg_conda/tree/devel/recipes/npg_qc_utils/65.0;
+   Build.PL changed accordingly
+
+release 64.6.3
+ - update parsing of spatial filter stats in spatial_filter QC check
+
+release 64.6.2
+ - QC viewer changes for genotype call
+
+release 64.6.1
+ - tweak to GbS library type check in genotype call as arrived as GBS (now case-insensitive).
+ - Exit rna seqc gracefully if bam has no reads
+ - more stringent ref check now required for Pf3D7_v3.fa/hs37d5__Pf3D7_v3.fa
+   in genotype check
+
+release 64.6
+ - add new metric glogin_pct_tpm to RNA-SeQC check
+ - DBIx schema loader script: alter table to add new globin metric column
+ - add functionality to pass some of the files necessary to run RNA-SeQC
+   as CLI options for program qc for more flexibility for stand alone run
+ - add new role for rna_seqc to implement ability to extract values from
+   column other_metrics to be stored in ml warehouse database.
+ - add tag_hops_power and tag_hops_percent columns to tag metrics
+ - remove run_timeline component on the Illumina QC loader
+ - stop generating DBIx class for run_timeline db table
+ - remove unused methods of the run_graph Clearpress model
+ - add new role for rna_seqc to implement ability to extract values from
+   column other_metrics to be stored in ml warehouse database
+ - changes for GbS genotype calling check 
+ - tag_sniff
+    handle separators in BC tags for dual-index runs
+    allow dual-index runs to be revcomped independantly
+    when tag has a separator -t option operates on subtags
+    allowed to ignore an index when the BC tag contains a separator 
+
+release 64.5
+ - qc outcomes model: code generalisation to simplify addition of
+   further qc types
+ - uqc outcomes - saving and updating enabled
+ - switch to node 6.12.2 in travis
+ - stop generating DBIx classes for unused tables
+ - tiny tweaks to rna and verify bam id help links
+ - ensure, where practical, that saving and retrieving qc outcomes
+     works for multi-component compositions
+ - add functionality to allow more columns to be added to table dynamically
+ - add data for new extra column for sample_name in summary table
+ - treat all dynamically added methods in the same way
+
+release 64.4.1
+ - fix bam_flagstats check library_size bug
+
+release 64.4 
+ - utility QC feature: db tables, DBIx classes, retrieval
+ - Add STAR aligner bams as a valid RNA alignments
+ - update bam_flagstats to be able run when no markdups metrics file exists
+
+release 64.3.1
+ - error in a statement for data update is fixed
+
+release 64.3 
+ - DBIx schema loader script: automatically add npg_qc::Schema::Composition
+ - drop unique consctraint for (id_run, position and tag_index) columns;
+ - make a foreign key to seq_composition table not nullable and set
+     a unique constraint on the foreign key column in entity tables;
+ - do not use id_run, position and tag index column values from
+     entity tables, compute rpt lists from compositions;
+ - do not list explisitly id_run, position and tag_index in return
+     datastructes for both get and save outcomes methods
+ - a method to find a composition without creating one
+
+release 64.2
+ - Cannot have default Moose constructor in derived DBIx classes - fix for
+     custom MqcOutcomeEnt resultset
+ - DBIx achema loader script: automatically add npg_qc::Schema::Composition
+     role when generating result classes for autoqc tables
+ - DBIx classes for autoqc db tables:
+     remove 'create_component' factory method which was only needed
+      for back-filling composition foreign key;
+     inherit 'composition' attribute from a newly created
+      npg_qc::Schema::Composition role;
+     document 'composition' attribute
+ - composition-enabled manual qc:
+     db tables linked to the seq_composition table;
+     search proceeds via releated composition tables;
+     when mqc outcomes are saved, a composition is created if it does not exist;
+     'composition' attribute is added to mqc entity result classes;
+ - upgrade bower to 1.8.2 in travis
+ - stop building on Travis under Perl 5.16,
+   see https://rt.cpan.org/Public/Bug/Display.html?id=123310
+
+release 64.1
+ - SeqQC viewer - function to draw readonly representation of the
+   utility flag
+ - autoqc checks parect object - refactore to use a new factory for
+   rpt list to composition transformation
+ - upstream_tags modified so it can work with the rpt_list argument
+ - constraints in autoqc db tables are reset to allow for saving
+   results for multi-component compositions
+ - tag_sniff modified to load the whole tag table upfront
+     revcomp matches now output in reverse video
+
+release 64.0
+ - composition-enabled autoqc objects storage
+     schema changes
+     DBIx binding updates
+     script for back-filling foreign keys to composition table
+ - bug fix on search_autoqc method
+ - db composition creation via a factory method
+ - db autoqc loader - unused 'update' option removed
+ - db autoqc loader - will retry a transaction that failed because
+     a db lock could not be aquired
+ - saving a component with subset attribute value 'all' gives an error
+ - npg_qc::autoqc::results::collection
+     remove unused functionality;
+     ensure existing methods work with objects that do not have id_run,
+     position, etc
+ - remove superfluous method call from a template
+ - db query for tag_index NULL or NOT NULL: undef as a string
+   might not give problems now, but will when all db records are
+   linked to compositions
+ - remove unused qc_chema property from TransferObjectFactory 
+ - set explicit dist to precise in travis yml
+ - simplify and optmise pool detection in the viewer
+ - remove links to Clarity LIMs, generalise code for linking to LIMs
+ - deleted VC (view-controller) part of the Clearpress npg_qc web server
+ - index unq_seq_compos_rp for seq_component becomes unique
+
+release 63.1
+ - label fix for rna_seqc in SeqQC viewer
+ - MySQL does not save correctly integers to float columns;
+   change column definitions for rna_seqc
+
+release 63.0
+ - update script for deleting autoqc database results so that it
+   can handle composition-based tables
+ - remove attribute qc_report_dir from check object: the output directory
+   is created by default using the sample's filename root
+ - npg_qc::autoqc::qc_store - load rna_seqc results into new rna_seqc
+   table in npg_qc database.
+ - SeqQC:
+   - added template for rna_seqc check with selected metrics shown
+     in summary
+   - include a link to original RNA-SeQC report in check's template
+   - Build will fail if no node, npm or bower are available in path
+ - stop using multiple versions of samtools
+ - do not install NPGQC web app
+ - increase HTTP timeout when reporting manual qc outcomes to LIMs
+
+release 62.9
+ - fix for GD image generation test in response to a change in constructor
+   behaviour in GD.pm
+ - compute expected path in tests in a way that takes into account
+   substitutions
+ - genotype and verify_bam_id checks:
+     speed up pipeline job submission for deeply plexed lanes by
+     moving calls that involde access to reference repository out of the
+     can_run method
+ - composition-based autoqc results db search via DBIx: allow for
+   a search query that contains fields from the main table
+
+release 62.8
+ - tag_sniff modified clip and revcomp options to handle split tags
+ - Sort results for merged genotypes as well - to avoid out of order failure.
+ - specify an appropriate "accept" header when sending manual qc
+   outcomes to LIMs (header was not set resulting in 406 responce
+   code)
+
+release 62.7
+ - current staging directories do not have autoqc results in
+   bustard_path; stop looking there
+ - ClearPress Perl library is pinned to v. 473.0.5
+ - upstream_tags autoqc check: stop falling back on files in IRODs
+
+release 62.6
+ - make building the iRODS handle of npg_qc::autoqc::checks::genotype
+   lazy to avoid calling baton until required at runtime
+ - translation from a database composition representation to the
+     npg_tracking::glossary::composition type object
+ - db query for compisition-based tables should include a condition
+     on tag_index if only lanes or plexes are being retrieved
+ - Fix in npg_qc::utils::bam_genotype for rare out of order mpileup failures 
+ - Travis CI build: when building dependencies, us the same
+   branch as the one the pull request is made to.
+ - back to testing with mysql 5.7.13 in travis
+ - drop node 0.12 from node travis matrix
+ - add perl 5.22-shrplib to travis matrix
+ - to reduce uncertainty in ranking close results, increase precision
+   used for ranking contamination results
+ - call_gtck_composite_rpt.pl - supply rpt list to genotype check
+ - Code and tests changes to reduce number of warnings under Perl 5.22.2
+ - sequence mismatch - do not return PDL special values, treat NaN as
+   a bad value and return undefined instead
+
+release 62.5
+ - a very concise replacement for NPG_QC pages
+ - no templates rna_seqc results - we should not try rendering
+
+release 62.4
+ - autoqc loader does not try loading a result for which there is
+   no coresponding DBIx binding
+
+release 62.3
+ - make bam_flagstats check runnable under the qc script
+ - remove autoqc loader backwards compatibility with analysis code
+   that does not generate related results for the bam_flagstats results
+ - Arguments given to the qc script are passed through to the relevant
+   qc check object.
+ - QC script does not try to infer the location of input files.
+ - QC script accepts the rpt_list argument.
+ - tag_index attribute of the check object cannot be assigned to undef.
+ - added Broad Institute's RNA-SeQC to autoqc QC checks
+ - SeqQC - genotype view fixed (escaping)
+
 release 62.1
  - Bug fix in build action for cgi files.
 

@@ -5,29 +5,30 @@ use namespace::autoclean;
 use Carp;
 use File::Basename;
 use File::Spec::Functions qw(catfile catdir);
-use List::MoreUtils qw { any };
+use List::MoreUtils qw(any none);
 use File::Slurp;
 use JSON;
-use npg_qc::utils::bam_genotype;
-use npg_qc::utils::iRODS;
-use npg_qc::autoqc::types;
 use Readonly;
-use FindBin qw($Bin);
+use Try::Tiny;
+use IO::All;
+
+use npg_qc::utils::bam_genotype;
+use npg_qc::autoqc::types;
+use WTSI::NPG::iRODS;
+use WTSI::NPG::iRODS::DataObject;
 
 extends qw(npg_qc::autoqc::checks::check);
 with qw(npg_tracking::data::reference::find
-        npg_common::roles::software_location
-       );
+        npg_common::roles::software_location);
 
 our $VERSION = '0';
 
-Readonly::Scalar our $HUMAN_REFERENCES_DIR => q[Homo_sapiens];
 Readonly::Scalar my $GENOTYPE_DATA => 'sgd';
-Readonly::Scalar my $SAMTOOLS_NAME => q[samtools_irods];
-Readonly::Scalar my $SAMTOOLS_EXTRACT_REGIONS_NAME => q[samtools1];
-Readonly::Scalar my $SAMTOOLS_MERGE_NAME => q[samtools1];
-Readonly::Scalar my $SAMTOOLS_MPILEUP_NAME => q[samtools1];
-Readonly::Scalar my $BCFTOOLS_NAME => q[bcftools1];
+Readonly::Scalar my $SAMTOOLS_NAME => q[samtools];
+Readonly::Scalar my $SAMTOOLS_EXTRACT_REGIONS_NAME => q[samtools];
+Readonly::Scalar my $SAMTOOLS_MERGE_NAME => q[samtools];
+Readonly::Scalar my $SAMTOOLS_MPILEUP_NAME => q[samtools];
+Readonly::Scalar my $BCFTOOLS_NAME => q[bcftools];
 Readonly::Scalar our $EXT => q[bam];
 Readonly::Scalar my $SEQUENOM_QC_PLEX => q[W30467];
 Readonly::Scalar my $DEFAULT_QC_PLEX => q[sequenom_fluidigm_combo];
@@ -42,19 +43,17 @@ Readonly::Scalar my $MAX_ALT_MATCHES => 4;
 
 has '+file_type' => (default => $EXT,);
 has '+aligner'   => (default => 'fasta',);
-has '+id_run'    => (required => 0, );
-has '+position'  => (isa => 'Maybe[NpgTrackingLaneNumber]', required => 0, );
 
-# Human references repository - look under this directory for human genome reference files
-has 'human_references_repository' => (
-	isa =>'NPG_TRACKING_REFERENCE_REPOSITORY',
-	is => 'ro',
-	lazy_build => 1,
+has 'irods' =>(
+   is       => 'ro',
+   isa      => 'WTSI::NPG::iRODS',
+   required => 1,
+   lazy     => 1,
+   builder  => '_build_irods',
 );
-sub _build_human_references_repository {
-	my $self = shift;
-	return catdir($self->ref_repository, $HUMAN_REFERENCES_DIR);
-}
+sub _build_irods {
+  return WTSI::NPG::iRODS->new();
+};
 
 # you can override the executable name. May be useful for variants like "samtools_irods"
 has 'samtools_name' => (
@@ -72,39 +71,6 @@ has 'samtools' => (
 sub _build_samtools {
 	my ($self) = @_;
 	return $self->samtools_name;
-}
-
-has 'samtools_extract_regions' => (
-        is => 'ro',
-        isa => 'NpgCommonResolvedPathExecutable',
-        lazy_build => 1,
-        coerce => 1,
-);
-sub _build_samtools_extract_regions {
-	my ($self) = @_;
-	return $SAMTOOLS_EXTRACT_REGIONS_NAME;
-}
-
-has 'samtools_merge' => (
-        is => 'ro',
-        isa => 'NpgCommonResolvedPathExecutable',
-        lazy_build => 1,
-        coerce => 1,
-);
-sub _build_samtools_merge {
-	my ($self) = @_;
-	return $SAMTOOLS_MERGE_NAME;
-}
-
-has 'samtools_mpileup' => (
-        is => 'ro',
-        isa => 'NpgCommonResolvedPathExecutable',
-        lazy_build => 1,
-        coerce => 1,
-);
-sub _build_samtools_mpileup {
-	my ($self) = @_;
-	return $SAMTOOLS_MPILEUP_NAME;
 }
 
 # you can override the executable name. May be useful for variants like "samtools_irods"
@@ -125,16 +91,11 @@ sub _build_bcftools {
 	return $self->bcftools_name;
 }
 
-has 'genotype_executables_path' => (
-	is => 'ro',
-	isa => 'Str',
-	default => sub { return $Bin },
-);
-
 # sequenom_plex - this specifies the source of the genotype data
 has 'sequenom_plex' => (
 	is => 'ro',
 	isa => 'Str',
+  writer => '_set_sequenom_plex',
 	default => $DEFAULT_QC_PLEX,
 );
 
@@ -144,6 +105,7 @@ has 'sequenom_plex' => (
 has 'snp_call_set' => (
 	is => 'ro',
 	isa => 'Str',
+  writer => '_set_snp_call_set',
 	default => $DEFAULT_SNP_CALL_SET,
 );
 
@@ -160,6 +122,7 @@ sub _build_aix_file {
 has 'gt_db' => (
 	is => 'ro',
 	isa => 'Str',
+  writer => '_set_gt_db',
 	lazy_build => 1,
 );
 sub _build_gt_db {
@@ -198,12 +161,8 @@ has 'min_sample_call_rate' => (
 has 'gt_pack_cmd' => (
 	is => 'ro',
 	isa => 'Str',
-	lazy_build => 1,
+	default => q{gt_pack},
 );
-sub _build_gt_pack_cmd {
-	my ($self) = @_;
-	return $self->genotype_executables_path() . q{/gt_pack};
-}
 
 has 'gt_pack_flags' => (
 	is => 'ro',
@@ -225,12 +184,8 @@ has 'gt_pack_args' => (
 has 'find_gt_match_cmd' => (
 	is => 'ro',
 	isa => 'Str',
-	lazy_build => 1,
+	default => q{find_gt_match},
 );
-sub _build_find_gt_match_cmd {
-	my ($self) = @_;
-	return $self->genotype_executables_path() . q{/find_gt_match};
-}
 
 has 'find_gt_match_flags' => (
 	is => 'ro',
@@ -261,6 +216,7 @@ has 'min_common_snps' => (
 has 'sample_name'  => (
 	is => 'ro',
 	isa => 'Maybe[Str]',
+  writer => '_set_sample_name',
 	lazy_build => 1,
 );
 sub _build_sample_name {
@@ -278,7 +234,12 @@ has 'reference_fasta' => (
 sub _build_reference_fasta {
 	my ($self) = @_;
 
-	return $self->refs->[0];
+  my $href = { 'aligner' => $self->aligner, 'lims' => $self->lims, };
+  my $ref  = $self->lims->gbs_plex_name ?
+      Moose::Meta::Class->create_anon_class(
+        roles => [qw/npg_tracking::data::gbs_plex::find/])->new_object($href)->refs->[0] :
+      $self->refs->[0];
+  return $ref;
 }
 
 has 'alignments_in_bam'  => (
@@ -333,40 +294,44 @@ has 'input_files_md5' => (
 	lazy_build => 1,
 );
 sub _build_input_files_md5 {
-	my ($self) = @_;
-	my $md5 = q{};
-	Readonly::Scalar my $IRODS_PREFIX_LEN_IS_THIS_READABLE_ENOUGH => 6;
+    my ($self) = @_;
+    my $md5;
+    Readonly::Scalar my $IRODS_PREFIX_LEN_IS_THIS_READABLE_ENOUGH => 6;
 
-	my @md5_vals = ();
-	for my $input_file (@{$self->input_files}) {
-		if($input_file =~ /^irods:/smx) {
-			my $irods_filename = substr $input_file, $IRODS_PREFIX_LEN_IS_THIS_READABLE_ENOUGH;  # strip leading "irods:"
+    my @md5_vals = ();
+    for my $input_file (@{$self->input_files}) {
+        $md5 = q{};
+        if ($input_file =~ /^irods:/smx) {
+            my $irods_filename = substr $input_file, $IRODS_PREFIX_LEN_IS_THIS_READABLE_ENOUGH;  # strip leading "irods:"
+            try {
+                my $data_obj = WTSI::NPG::iRODS::DataObject->new(
+                    $self->irods, $irods_filename
+                );
+                $md5 = $data_obj->checksum;
+            } catch {
+                my $msg = 'Unable to find md5 checksum for '.
+                    "iRODS file '$irods_filename': $_";
+                carp($msg);
+                $md5 = '0000000000000000';
+            }
+        } else {
+            my $md5_file = "${input_file}.md5";
+            if(-r $md5_file) {
+                open my $f, '<', $md5_file or croak "$md5_file readable, but open fails";
+                $md5 = <$f>;
+                chomp $md5;
+                close $f or croak "Failed to close $md5_file";
+            }
+            if (! $md5) {
+                my $msg = "Unable to read md5 checksum from file '$md5_file'";
+                carp($msg);
+                $md5 = '0000000000000000';
+            }
+        }
+        push @md5_vals, $md5;
+    }
 
-			$md5 = npg_qc::utils::iRODS->new->get_file_md5($irods_filename);
-
-			$md5 ||= '0000000000000000';
-
-			push @md5_vals, $md5;
-		}
-		else {
-			my $md5_file = "${input_file}.md5";
-
-			$md5 = q{};
-			if(-r $md5_file) {
-				open my $f, '<', $md5_file or croak "$md5_file readable, but open fails";
-
-				$md5 = <$f>;
-
-				close $f or croak "Failed to close $md5_file";
-
-			}
-			$md5 ||= '0000000000000000';
-			push @md5_vals, $md5;
-		}
-
-	}
-
-	return join q[;], @md5_vals;
+    return join q[;], @md5_vals;
 }
 
 #####################################################################################################################
@@ -380,11 +345,11 @@ has 'pos_snpname_map_fn' => (
 sub _build_pos_snpname_map_fn {
 	my ($self) = @_;
 	my $genotypes_repository = $self->genotypes_repository;
-	my $human_references_repository = $self->human_references_repository;
 	my $reference = $self->reference_fasta;
 	my $ref_to_snppos_suffix_map = $self->_ref_to_snppos_suffix_map;
 
-	my $chrconv_suffix = $ref_to_snppos_suffix_map->{$reference};
+	my $chrconv_suffix = $ref_to_snppos_suffix_map->{basename($reference)};
+
 
 	if(!defined $reference || !defined $chrconv_suffix) {
 		return;
@@ -410,7 +375,7 @@ sub _build_chrname_conv_fn {
 	my ($self) = @_;
 	my $genotypes_repository = $self->genotypes_repository;
 
-	my $fn = $genotypes_repository . q[/chrconv_map.json];
+	my $fn = $genotypes_repository . q[/chrconv_map_v2.json];
 
 	return $fn;
 }
@@ -433,7 +398,7 @@ has 'bam_genotype' => (
 sub _build_bam_genotype {
 	my ($self) = @_;
 
-	my %bg_params = (sample_name => $self->sample_name, plex => $self->sequenom_plex, reference => $self->reference_fasta, pos_snpname_map_filename => $self->pos_snpname_map_fn, report_aux_data => $self->report_aux_data, samtools_extract_regions => $self->samtools_extract_regions, samtools_merge => $self->samtools_merge, samtools_mpileup => $self->samtools_mpileup, samtools_name => $self->samtools_name, bcftools => $self->bcftools, bcftools_name => $self->bcftools_name, );
+	my %bg_params = (sample_name => $self->sample_name, plex => $self->sequenom_plex, reference => $self->reference_fasta, pos_snpname_map_filename => $self->pos_snpname_map_fn, report_aux_data => $self->report_aux_data, samtools_name => $self->samtools_name, bcftools => $self->bcftools, bcftools_name => $self->bcftools_name, );
 
 	$bg_params{bam_file_list} = $self->input_files;
 
@@ -442,8 +407,6 @@ sub _build_bam_genotype {
 
 override 'can_run' => sub {
 	my $self = shift;
-
-	# make sure that a sample name has been supplied and that the bam file is aligned with one of the recognised human references
 
 	if(!defined $self->sample_name) {
 		$self->result->add_comment('No sample name specified');
@@ -460,24 +423,37 @@ override 'can_run' => sub {
 		return 0;
 	}
 
-	if(! any { $_ =~ $self->reference_fasta; } (keys %{$self->_ref_to_snppos_suffix_map})) {
+ 	# make sure that the bam file is aligned with one of the recognised human references
+	if(! any { $_ eq fileparse($self->reference_fasta); } (keys %{$self->_ref_to_snppos_suffix_map})) {
 		$self->result->add_comment('Specified reference genome may be non-human');
 		return 0;
-	}
+ 	}
 
-	return 1;
+ 	return 1;
 };
 
 override 'execute' => sub {
 	my ($self) = @_;
 
-	return 1 if super() == 0;
+	try {
+		super();
+	} catch {
+		my $e = $_;
+		if(none {/\Airods:/smx} @{$self->input_files}) { # we might be given files from iRODS
+			croak $_;
+		}
+	};
 
 	if(!$self->can_run()) {
 		return 1;
 	}
 
-# run check
+  # over-ride if geno_refset available
+  if($self->geno_refset && !$self->lims->gbs_plex_name) {
+    $self->_set_attrib_by_geno_refset;
+  }
+
+  # run check
 	my $gt_check_cmd = sprintf
 			q{set -o pipefail && printf "%s" | %s %s %s | %s %s %s},
 			$self->tsv_genotype,
@@ -489,7 +465,7 @@ override 'execute' => sub {
 			$self->find_gt_match_args()
 		;
 
-	open my $f, q{-|}, qq{$gt_check_cmd} or croak 'Failed to execute check';
+	open my $f, q{-|}, qw{bash -c}, qq{$gt_check_cmd} or croak 'Failed to execute check';
 
 	my $json_results = <$f>;
 
@@ -604,9 +580,9 @@ has '_ref_to_snppos_suffix_map' => (
 );
 sub _build__ref_to_snppos_suffix_map {
 	my ($self) = @_;
-	my $human_references_repository = $self->human_references_repository;
 
 	my $chrconv_fn = $self->chrname_conv_fn;
+
 	if($chrconv_fn and -f $chrconv_fn) { # if a map file is available, use it
 		my $chrconv_map = {};
                 my $s = read_file($chrconv_fn);
@@ -614,33 +590,92 @@ sub _build__ref_to_snppos_suffix_map {
                         my $json = from_json($s);
 			$chrconv_map = $json->{ref_chrconv_map};
                 }
-		my %ret = ();
-		$chrconv_map ||= {};
-		# prepend current base for reference repository 
-		@ret{(map { $human_references_repository . q[/] . $_; } keys %{$chrconv_map})} = values %{$chrconv_map};
-
-		return \%ret;
+    return $chrconv_map;
         }
 	else { # default to these values when map file is unavailable
 		Readonly::Scalar my $NO_CHR_SUFFIX => '1000Genomes';
 		Readonly::Scalar my $USE_CHR_SUFFIX => 'GRCh37';
 		Readonly::Scalar my $USE_GRCH38_CHR_SUFFIX => 'GRCh38';
 
-		my $ref_to_snppos_suffix_map = {
-			"$human_references_repository/1000Genomes/all/fasta/human_g1k_v37.fasta" => $NO_CHR_SUFFIX,
-			"$human_references_repository/1000Genomes_hs37d5/all/fasta/hs37d5.fa" => $NO_CHR_SUFFIX,
-			"$human_references_repository/CGP_GRCh37.NCBI.allchr_MT/all/fasta/Homo_sapiens.GRCh37.NCBI.allchr_MT.fa" => $NO_CHR_SUFFIX,
-			"$human_references_repository/GRCh37_53/all/fasta/Homo_sapiens.GRCh37.dna.all.fa" => $USE_CHR_SUFFIX,
-			"$human_references_repository/NCBI36/all/fasta/Homo_sapiens.NCBI36.48.dna.all.fa" => $NO_CHR_SUFFIX,
-			"$human_references_repository/GRCh38_15/all/fasta/Homo_sapiens.GRCh38_15.fa" => $USE_GRCH38_CHR_SUFFIX,
-			"$human_references_repository/GRCh38_15_noEBV/all/fasta/Homo_sapiens.GRCh38_15_noEBV.fa" => $USE_GRCH38_CHR_SUFFIX,
-			"$human_references_repository/GRCh38_15_plus_hs38d1/all/fasta/Homo_sapiens.GRCh38_15_plus_hs38d1.fa" => $USE_GRCH38_CHR_SUFFIX,
-			"$human_references_repository/GRCh38_full_analysis_set_plus_decoy_hla/all/fasta/Homo_sapiens.GRCh38_full_analysis_set_plus_decoy_hla.fa" => $USE_GRCH38_CHR_SUFFIX,
-		};
+    my $ref_to_snppos_suffix_map = {
+      q{human_g1k_v37.fasta} => $NO_CHR_SUFFIX,
+      q{hs37d5.fa} => $NO_CHR_SUFFIX,
+      q{Homo_sapiens.GRCh37.NCBI.allchr_MT.fa} => $NO_CHR_SUFFIX,
+      q{Homo_sapiens.GRCh37.dna.all.fa} => $USE_CHR_SUFFIX,
+      q{Homo_sapiens.NCBI36.48.dna.all.fa} => $NO_CHR_SUFFIX,
+      q{Homo_sapiens.GRCh38_15.fa} => $USE_GRCH38_CHR_SUFFIX,
+      q{Homo_sapiens.GRCh38_15_noEBV.fa} => $USE_GRCH38_CHR_SUFFIX,
+      q{Homo_sapiens.GRCh38_15_plus_hs38d1.fa} => $USE_GRCH38_CHR_SUFFIX,
+      q{Homo_sapiens.GRCh38_full_analysis_set_plus_decoy_hla.fa} => $USE_GRCH38_CHR_SUFFIX,
+    };
 
 		return $ref_to_snppos_suffix_map;
 	}
 }
+
+###################################################################
+# reset values where externally supplied genotype set is to be used
+###################################################################
+
+has 'geno_refset' => (
+	is       => 'ro',
+	isa      => 'Str | Undef',
+	lazy     => 1,
+  builder  => q[_build_geno_refset],
+);
+sub _build_geno_refset {
+	my ($self) = @_;
+  my $ref = $self->_get_grfind;
+  return $ref->geno_refset_genotype_base ?
+      $ref->geno_refset_genotype_base : q[];
+}
+
+has 'alternate_sample_name' => (
+	is       => 'ro',
+	isa      => 'Str | Undef',
+	lazy     => 1,
+  builder  => q[_build_alternate_sample_name],
+);
+sub _build_alternate_sample_name {
+  my ($self) = @_;
+  my $ref    = $self->_get_grfind;
+
+  my $name;
+  if ($ref->geno_refset_info_path ) {
+    my $info = decode_json(io($ref->geno_refset_info_path)->slurp);
+    if ($info->{'expected_sample_field'}) {
+      my $type = $info->{'expected_sample_field'};
+      $name = $self->lims->$type;
+      if(!$name || $name !~ /\S/smx) {
+        croak qq[No expected sample name found using requested $type];
+      }
+    }
+  }
+  return $name;
+}
+
+sub _set_attrib_by_geno_refset {
+  my ($self) = @_;
+  my $name   = fileparse($self->geno_refset);
+
+  $self->_set_sequenom_plex($name);
+  $self->_set_snp_call_set($name);
+  $self->_set_gt_db($self->geno_refset);
+
+  if($self->alternate_sample_name) {
+    $self->_set_sample_name($self->alternate_sample_name);
+  }
+  return;
+}
+
+sub _get_grfind {
+  my ($self) = @_;
+  my $href   = { 'aligner' => $self->aligner, 'lims' => $self->lims, };
+  my $ref    = Moose::Meta::Class->create_anon_class(
+    roles => [qw/npg_tracking::data::geno_refset::find/])->new_object($href);
+  return $ref;
+}
+
 
 __PACKAGE__->meta->make_immutable();
 
@@ -683,7 +718,35 @@ npg_qc::autoqc::checks::genotype - compare genotype from bam with Sequenom QC re
 
 =over
 
+=item Moose
+
 =item namespace::autoclean
+
+=item Carp
+
+=item File::Basename
+
+=item File::Spec::Functions
+
+=item List::MoreUtils
+
+=item File::Slurp
+
+=item JSON
+
+=item Readonly
+
+=item Try::Tiny
+
+=item IO:All
+
+=item npg_tracking::data::reference::find
+
+=item WTSI::NPG::iRODS
+
+=item WTSI::NPG::iRODS::DataObject
+
+=item npg_common::roles::software_location
 
 =back
 
@@ -693,7 +756,7 @@ Kevin Lewis, kl2
 
 =head1 LICENSE AND COPYRIGHT
 
-Copyright (C) 2015 GRL
+Copyright (C) 2018 GRL
 
     This file is part of NPG.
 

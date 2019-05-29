@@ -16,7 +16,8 @@ has '+file_type' => (default => 'bam_alignment_filter_metrics.json',);
 override 'execute' => sub {
     my ($self) = @_;
 
-    if (super() == 0) {  return 1; }
+    super();
+
     my $contents = slurp $self->input_files->[0];
     my $all_fields = from_json($contents);
     foreach my $field (qw/programName programVersion/) {
@@ -51,19 +52,19 @@ __END__
 
 =head1 NAME
 
-npg_qc::autoqc::checks::alignment_filter_metrics - stats for splitting files by alignment
+npg_qc::autoqc::checks::alignment_filter_metrics
 
 =head1 SYNOPSIS
 
 =head1 DESCRIPTION
 
+    Stats for splitting files by alignment
 
 =head1 SUBROUTINES/METHODS
 
 =head2 new
 
     Moose-based.
-
 
 =head1 DIAGNOSTICS
 
@@ -101,7 +102,7 @@ Marina Gourtovaia E<lt>mg8@sanger.ac.ukE<gt>
 
 =head1 LICENSE AND COPYRIGHT
 
-Copyright (C) 2015 GRL
+Copyright (C) 2016 GRL
 
 This file is part of NPG.
 

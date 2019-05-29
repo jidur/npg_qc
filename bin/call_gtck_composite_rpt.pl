@@ -39,7 +39,7 @@ use npg_qc::autoqc::checks::genotype;
 our $VERSION = '0';
 
 my %opts;
-getopts('hr:s:p:jo:g:m:a:x:c', \%opts);
+getopts('hr:s:p:jo:g:m:a:x:b', \%opts);
 
 ##########
 # rpt key list should be in the format <id_run>:<lane>[:tag];... These values are then used to construct the bam file names:
@@ -48,9 +48,10 @@ getopts('hr:s:p:jo:g:m:a:x:c', \%opts);
 #  otherwise, look in iRODS archive: 9213:6:40;8213:1:4 yields ("irods:/seq/9213/9213_6#40.bam", "irods:/seq/8213/8213_1#4.bam")
 ##########
 my @bam_file_list;
-my $ext = $opts{c}? q[cram]: q[bam];
-if($opts{r}) {
-	@bam_file_list = map { my ($r, $p, $t) = (split ":", $_); find_runlanefolder($r, $p, $t, $ext) or sprintf "irods:/seq/%d/%d_%d%s.%s", $r, $r, $p, $t? "#$t": "", $ext; } (split ";", $opts{r});
+my $ext = $opts{b}? q[bam]: q[cram];
+my $rpt_list = $opts{r};
+if($rpt_list) {
+	@bam_file_list = map { my ($r, $p, $t) = (split ":", $_); find_runlanefolder($r, $p, $t, $ext) or sprintf "irods:/seq/%d/%d_%d%s.%s", $r, $r, $p, $t? "#$t": "", $ext; } (split ";", $rpt_list);
 
 	carp qq[bam_file_list:\n\t], join("\n\t", @bam_file_list), "\n";
 }
@@ -92,7 +93,6 @@ my %attribs = (
 	alignments_in_bam => 1,
 	reference_fasta => $reference_genome,
 	input_files => [ (@bam_file_list) ],
-	path => q[.],
 );
 if(defined $plex_name) {
 	$attribs{sequenom_plex} = $plex_name;
@@ -108,6 +108,8 @@ if(defined $poss_dup_level) {
 if(defined $gt_exec_path) {
 	$attribs{genotype_executables_path} = $gt_exec_path;
 }
+
+$attribs{rpt_list} = $rpt_list;
 
 my $gtck= npg_qc::autoqc::checks::genotype->new(%attribs);
 
@@ -127,6 +129,9 @@ print $of $result_string;
 
 sub find_runlanefolder {
 	my ($id_run, $lane, $tag_index, $ext) = @_;
+
+	# temporarily disable search for run folder (assumptions about its structure are out of date)
+	return;
 
 	# the methods hash ref passed to create_anon_class looks peculiar, but seems to be necessary to create a new object
 	#  from an anonymous class in this way

@@ -80,7 +80,7 @@ Sequencing file format, e.g. SAM, BAM
 
 =head2 header
 
-  data_type: 'text'
+  data_type: 'mediumtext'
   is_nullable: 0
 
 File header, excluding SQ lines, the field is searchable
@@ -145,7 +145,7 @@ __PACKAGE__->add_columns(
   'sequence_format',
   { data_type => 'varchar', is_nullable => 0, size => 6 },
   'header',
-  { data_type => 'text', is_nullable => 0 },
+  { data_type => 'mediumtext', is_nullable => 0 },
   'seqchksum',
   { data_type => 'text', is_nullable => 0 },
   'seqchksum_sha512',
@@ -198,13 +198,14 @@ __PACKAGE__->belongs_to(
 );
 
 
-# Created by DBIx::Class::Schema::Loader v0.07043 @ 2015-09-09 17:35:44
-# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:glQpr8F7Nst/qIueaRFUEA
+# Created by DBIx::Class::Schema::Loader v0.07049 @ 2019-02-20 14:17:45
+# DO NOT MODIFY THIS OR ANYTHING ABOVE! md5sum:1Hz8njwstffBZXOLjCvIyQ
 
 
 # You can replace this text with custom code or comments, and it will be preserved on regeneration
 
-with 'npg_qc::Schema::Flators';
+with qw/ npg_qc::Schema::Composition
+         npg_qc::autoqc::role::result /;
 
 our $VERSION = '0';
 
@@ -224,6 +225,13 @@ __PACKAGE__->has_many(
   { 'foreign.id_seq_composition' => 'self.id_seq_composition' },
   { cascade_copy => 0, cascade_delete => 0 },
 );
+
+=head2 composition
+
+An lazy-build attribute representing a composition this result
+corresponds to.
+
+=cut
 
 __PACKAGE__->meta->make_immutable;
 1;
@@ -275,7 +283,7 @@ Marina Gourtovaia E<lt>mg8@sanger.ac.ukE<gt>
 
 =head1 LICENSE AND COPYRIGHT
 
-Copyright (C) 2016 GRL
+Copyright (C) 2017 GRL
 
 This file is part of NPG.
 
